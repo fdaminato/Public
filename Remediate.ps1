@@ -7,6 +7,13 @@
     This remediation script assumes detection already determined the device is non-compliant.
     It performs Windows Update cleanup/repair actions, then attempts update installation.
 
+.POST-REMEDIATION OUTPUT
+    Outputs a clear summary for Intune, including:
+    - method used
+    - updates found
+    - updates installed
+    - reboot required
+
 .EXIT CODES
     0 = remediation completed
     1 = fatal remediation failure
@@ -164,6 +171,28 @@ function Start-ServiceSafe {
     }
     catch {
         Write-Log "Could not start service $Name : $($_.Exception.Message)"
+    }
+}
+
+function Test-RebootPending {
+    try {
+        $paths = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired",
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+        )
+
+        if (Test-Path $paths[0]) { return $true }
+        if (Test-Path $paths[1]) { return $true }
+
+        $pendingFileRename = Get-ItemProperty -Path $paths[2] -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+        if ($null -ne $pendingFileRename.PendingFileRenameOperations) { return $true }
+
+        return $false
+    }
+    catch {
+        Write-Log "Error checking reboot pending state: $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -365,37 +394,17 @@ function Invoke-PreUpdateCleanup {
     if ($fullRepair -eq 1) {
         Write-Log "Full repair mode enabled - running DISM and SFC"
 
-        try {
-            & DISM.exe /Online /Cleanup-Image /ScanHealth | Out-Null
-            Write-Log "DISM ScanHealth completed"
-        }
-        catch {
-            Write-Log "Error running DISM ScanHealth: $($_.Exception.Message)"
-        }
+        try { & DISM.exe /Online /Cleanup-Image /ScanHealth | Out-Null; Write-Log "DISM ScanHealth completed" }
+        catch { Write-Log "Error running DISM ScanHealth: $($_.Exception.Message)" }
 
-        try {
-            & DISM.exe /Online /Cleanup-Image /RestoreHealth | Out-Null
-            Write-Log "DISM RestoreHealth completed"
-        }
-        catch {
-            Write-Log "Error running DISM RestoreHealth: $($_.Exception.Message)"
-        }
+        try { & DISM.exe /Online /Cleanup-Image /RestoreHealth | Out-Null; Write-Log "DISM RestoreHealth completed" }
+        catch { Write-Log "Error running DISM RestoreHealth: $($_.Exception.Message)" }
 
-        try {
-            & DISM.exe /Online /Cleanup-Image /StartComponentCleanup | Out-Null
-            Write-Log "DISM StartComponentCleanup completed"
-        }
-        catch {
-            Write-Log "Error running DISM StartComponentCleanup: $($_.Exception.Message)"
-        }
+        try { & DISM.exe /Online /Cleanup-Image /StartComponentCleanup | Out-Null; Write-Log "DISM StartComponentCleanup completed" }
+        catch { Write-Log "Error running DISM StartComponentCleanup: $($_.Exception.Message)" }
 
-        try {
-            & sfc.exe /scannow | Out-Null
-            Write-Log "SFC scan completed"
-        }
-        catch {
-            Write-Log "Error running SFC: $($_.Exception.Message)"
-        }
+        try { & sfc.exe /scannow | Out-Null; Write-Log "SFC scan completed" }
+        catch { Write-Log "Error running SFC: $($_.Exception.Message)" }
     }
     else {
         Write-Log "Full repair mode disabled"
@@ -755,6 +764,17 @@ function Invoke-PreUpdateCleanup {
 # ---------------------------------------------------------------------
 # Windows Update Install Helpers
 # ---------------------------------------------------------------------
+function New-UpdateResultObject {
+    return [PSCustomObject]@{
+        Method            = "None"
+        UpdatesFound      = 0
+        UpdatesInstalled  = 0
+        RebootRequired    = $false
+        Success           = $false
+        Details           = ""
+    }
+}
+
 function Install-PSWindowsUpdateIfNeeded {
     try {
         $moduleName = 'PSWindowsUpdate'
@@ -771,12 +791,8 @@ function Install-PSWindowsUpdateIfNeeded {
         if (-not $existingModule) {
             Write-Log "$moduleName module not found. Attempting installation."
 
-            try {
-                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            }
-            catch {
-                Write-Log "Could not set TLS 1.2 explicitly: $($_.Exception.Message)"
-            }
+            try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 }
+            catch { Write-Log "Could not set TLS 1.2 explicitly: $($_.Exception.Message)" }
 
             try {
                 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
@@ -830,6 +846,9 @@ function Install-PSWindowsUpdateIfNeeded {
 }
 
 function Invoke-PSWindowsUpdateMethod {
+    $result = New-UpdateResultObject
+    $result.Method = "PSWindowsUpdate"
+
     try {
         Write-Log "Checking for available updates via PSWindowsUpdate."
 
@@ -843,16 +862,24 @@ function Invoke-PSWindowsUpdateMethod {
         }
 
         $updates = @(Get-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -ErrorAction Stop)
+        $result.UpdatesFound = $updates.Count
 
         if (-not $updates -or $updates.Count -eq 0) {
             Write-Log "No updates found via PSWindowsUpdate."
-            return
+            $result.Success = $true
+            $result.Details = "No updates found"
+            $result.RebootRequired = Test-RebootPending
+            return $result
         }
 
         Write-Log "Updates found via PSWindowsUpdate: $($updates.Count)"
-        Write-Log "Installing all available updates via PSWindowsUpdate."
+        foreach ($u in $updates) {
+            Write-Log "PSWindowsUpdate candidate: $($u.Title)"
+        }
 
-        $installOutput = Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -Install -AutoReboot -ErrorAction Continue -Verbose 4>&1 | Out-String
+        Write-Log "Installing all available updates via PSWindowsUpdate."
+        $installOutput = Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -Install -IgnoreReboot -ErrorAction Continue -Verbose 4>&1 | Out-String
+
         if ($installOutput -and $installOutput.Trim().Length -gt 0) {
             foreach ($line in ($installOutput -split "`r?`n")) {
                 if ($line -and $line.Trim().Length -gt 0) {
@@ -861,14 +888,47 @@ function Invoke-PSWindowsUpdateMethod {
             }
         }
 
-        Write-Log "PSWindowsUpdate method completed."
+        $installedCount = 0
+        try {
+            $history = Get-WUHistory -MaxDate (Get-Date) -ErrorAction SilentlyContinue | Select-Object -First 50
+            if ($history) {
+                $recentWindow = (Get-Date).AddMinutes(-30)
+                $recentInstalled = $history | Where-Object {
+                    $_.Date -ge $recentWindow -and (
+                        $_.Result -match 'Succeeded' -or
+                        $_.ResultCode -eq 2
+                    )
+                }
+                $installedCount = @($recentInstalled).Count
+            }
+        }
+        catch {
+            Write-Log "Could not read WU history after PSWindowsUpdate install: $($_.Exception.Message)"
+        }
+
+        if ($installedCount -le 0 -and $updates.Count -gt 0) {
+            $installedCount = $updates.Count
+        }
+
+        $result.UpdatesInstalled = $installedCount
+        $result.RebootRequired = Test-RebootPending
+        $result.Success = $true
+        $result.Details = "PSWindowsUpdate completed"
+
+        Write-Log "PSWindowsUpdate method completed. Installed=$($result.UpdatesInstalled) RebootRequired=$($result.RebootRequired)"
+        return $result
     }
     catch {
         Write-Log "PSWindowsUpdate method failed: $($_.Exception.Message)"
+        $result.Details = $_.Exception.Message
+        return $result
     }
 }
 
 function Invoke-COMWindowsUpdateMethod {
+    $result = New-UpdateResultObject
+    $result.Method = "COM"
+
     try {
         Write-Log "Starting alternative Windows Update COM method."
 
@@ -877,10 +937,14 @@ function Invoke-COMWindowsUpdateMethod {
 
         Write-Log "Searching for software updates via COM API."
         $searchResult = $updateSearcher.Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
+        $result.UpdatesFound = $searchResult.Updates.Count
 
         if ($searchResult.Updates.Count -eq 0) {
             Write-Log "No updates found via COM API."
-            return
+            $result.Success = $true
+            $result.Details = "No updates found"
+            $result.RebootRequired = Test-RebootPending
+            return $result
         }
 
         Write-Log "Found $($searchResult.Updates.Count) updates via COM API."
@@ -903,11 +967,34 @@ function Invoke-COMWindowsUpdateMethod {
         $installer.Updates = $updatesToDownload
         $installResult = $installer.Install()
 
+        $installedCount = 0
+        for ($i = 0; $i -lt $updatesToDownload.Count; $i++) {
+            try {
+                $updateResult = $installResult.GetUpdateResult($i)
+                if ($updateResult.ResultCode -eq 2) {
+                    $installedCount++
+                }
+            }
+            catch {
+                Write-Log "Could not read COM result for update index $i : $($_.Exception.Message)"
+            }
+        }
+
+        $result.UpdatesInstalled = $installedCount
+        $result.RebootRequired = [bool]$installResult.RebootRequired
+        $result.Success = $true
+        $result.Details = "COM install completed"
+
         Write-Log "Installation completed with result code: $($installResult.ResultCode)"
+        Write-Log "Updates installed via COM: $installedCount"
         Write-Log "Reboot required: $($installResult.RebootRequired)"
+
+        return $result
     }
     catch {
         Write-Log "COM Windows Update method failed: $($_.Exception.Message)"
+        $result.Details = $_.Exception.Message
+        return $result
     }
 }
 
@@ -918,17 +1005,28 @@ function Invoke-WindowsUpdateRemediation {
         throw "This script must run with Administrator privileges."
     }
 
+    $result = $null
+
     $moduleReady = Install-PSWindowsUpdateIfNeeded
     if ($moduleReady -and (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue)) {
-        Invoke-PSWindowsUpdateMethod
+        $result = Invoke-PSWindowsUpdateMethod
     }
     else {
         Write-Log "Skipping PSWindowsUpdate method because module setup failed or cmdlets are unavailable."
     }
 
-    Invoke-COMWindowsUpdateMethod
+    if (-not $result -or -not $result.Success) {
+        Write-Log "Falling back to COM Windows Update method."
+        $result = Invoke-COMWindowsUpdateMethod
+    }
 
-    Write-Log "Windows Update remediation completed. A restart may be required."
+    if (-not $result) {
+        $result = New-UpdateResultObject
+        $result.Details = "No remediation method returned a result"
+    }
+
+    Write-Log "Windows Update remediation completed. Method=$($result.Method) Found=$($result.UpdatesFound) Installed=$($result.UpdatesInstalled) RebootRequired=$($result.RebootRequired) Success=$($result.Success)"
+    return $result
 }
 
 # ---------------------------------------------------------------------
@@ -936,7 +1034,7 @@ function Invoke-WindowsUpdateRemediation {
 # ---------------------------------------------------------------------
 Initialize-Logging
 Write-Log "===== REMEDIATION SCRIPT START ====="
-Write-Log "SCRIPT VERSION: 2026-03-30 REMEDIATION-ONLY-V1"
+Write-Log "SCRIPT VERSION: 2026-03-30 REMEDIATION-OUTPUT-V2"
 
 try {
     Write-Log "Detection already determined this device requires remediation."
@@ -944,7 +1042,11 @@ try {
     Invoke-PreUpdateCleanup
 
     Write-Log "Cleanup completed. Running Windows Update install workflow."
-    Invoke-WindowsUpdateRemediation
+    $updateResult = Invoke-WindowsUpdateRemediation
+
+    $summary = "Remediation summary | Method=$($updateResult.Method) | UpdatesFound=$($updateResult.UpdatesFound) | UpdatesInstalled=$($updateResult.UpdatesInstalled) | RebootRequired=$($updateResult.RebootRequired) | Success=$($updateResult.Success) | Details=$($updateResult.Details)"
+    Write-Log $summary
+    Write-Output $summary
 
     Write-Log "===== REMEDIATION SCRIPT END ====="
     exit 0
@@ -955,6 +1057,7 @@ catch {
 
     Write-Log $errorMessage
     Write-Log $errorDetails
+    Write-Output $errorMessage
     Write-Log "===== REMEDIATION SCRIPT END ====="
 
     exit 1

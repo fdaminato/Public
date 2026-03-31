@@ -18,9 +18,9 @@ $LogFolder = "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs"
 $LogPath   = Join-Path $LogFolder "WindowsUpdate-Compliance-Detect.log"
 
 $MinimumRequiredQualityByBuild = @{
-    '26100' = 7462
-    '26200' = 7462
-    '26300' = 7462
+    '26100' = 7840
+    '26200' = 7840
+    '26300' = 7840
 }
 
 $AllowHigherBuildBranches = $false
@@ -158,7 +158,7 @@ function Test-QualityCompliance {
 # ---------------------------------------------------------------------
 Initialize-Logging
 Write-Log "===== DETECTION SCRIPT START ====="
-Write-Log "SCRIPT VERSION: 2026-03-30 DETECTION-V1"
+Write-Log "SCRIPT VERSION: 2026-03-30 DETECTION-V3"
 
 try {
     if (-not $MinimumRequiredQualityByBuild -or $MinimumRequiredQualityByBuild.Count -eq 0) {
@@ -180,37 +180,35 @@ try {
     Write-Log "Returned compliance object: Compliant='$($complianceResult.Compliant)' Reason='$($complianceResult.Reason)' RequiredBuild='$($complianceResult.RequiredBuild)' RequiredUBR='$($complianceResult.RequiredUBR)'"
 
     if ([bool]$complianceResult.Compliant -eq $true) {
-        Write-Log "STATUS: COMPLIANT - current OS version '$($osInfo.FullVersion)' meets required minimum."
-        Write-Output "Compliant: $($osInfo.FullVersion)"
-        Write-Log "===== DETECTION SCRIPT END ====="
+        $summary = "Detection summary | Compliant=True | CurrentVersion=$($osInfo.FullVersion) | Reason=OK"
+        Write-Log $summary
+        Write-Output $summary
+        Write-Log "$summary"
         exit 0
     }
 
     switch ($complianceResult.Reason) {
         "UBR_TOO_LOW" {
-            Write-Log "STATUS: NON-COMPLIANT - current OS version '$($osInfo.FullVersion)' is below required minimum 10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR)."
-            Write-Output "Non-compliant: current version $($osInfo.FullVersion), required minimum 10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR)"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | RequiredMinimum=10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR) | Reason=UBR_TOO_LOW"
         }
         "HIGHER_BRANCH_UBR_TOO_LOW" {
-            Write-Log "STATUS: NON-COMPLIANT - higher unconfigured build branch but below fallback minimum 10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR)."
-            Write-Output "Non-compliant: higher build branch, but UBR too low"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | RequiredMinimum=10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR) | Reason=HIGHER_BRANCH_UBR_TOO_LOW"
         }
         "WRONG_BRANCH" {
             $allowedBranches = @()
             foreach ($key in ($MinimumRequiredQualityByBuild.Keys | Sort-Object)) {
                 $allowedBranches += "10.0.$key.$($MinimumRequiredQualityByBuild[$key])"
             }
-
-            Write-Log "STATUS: NON-COMPLIANT - current OS version '$($osInfo.FullVersion)' is not on an allowed build branch. Allowed minimum versions: $($allowedBranches -join ', ')"
-            Write-Output "Non-compliant: wrong build branch. Allowed minimum versions: $($allowedBranches -join ', ')"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | AllowedMinimumVersions=$($allowedBranches -join '; ') | Reason=WRONG_BRANCH"
         }
         default {
-            Write-Log "STATUS: NON-COMPLIANT - Reason: $($complianceResult.Reason)"
-            Write-Output "Non-compliant: $($complianceResult.Reason)"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | Reason=$($complianceResult.Reason)"
         }
     }
 
-    Write-Log "===== DETECTION SCRIPT END ====="
+    Write-Log $summary
+    Write-Output $summary
+    Write-Log "$summary"
     exit 1
 }
 catch {
@@ -220,7 +218,7 @@ catch {
     Write-Log $errorMessage
     Write-Log $errorDetails
     Write-Output $errorMessage
-    Write-Log "===== DETECTION SCRIPT END ====="
+    Write-Log "$errorDetails"
 
     exit 1
 }

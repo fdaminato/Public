@@ -1010,15 +1010,21 @@ function Invoke-WindowsUpdateRemediation {
     $moduleReady = Install-PSWindowsUpdateIfNeeded
     if ($moduleReady -and (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue)) {
         $result = Invoke-PSWindowsUpdateMethod
+
+        if ($result -and $result.Success) {
+            Write-Log "PSWindowsUpdate succeeded. Skipping COM fallback to avoid a second immediate scan/install cycle."
+            Write-Log "Windows Update remediation completed. Method=$($result.Method) Found=$($result.UpdatesFound) Installed=$($result.UpdatesInstalled) RebootRequired=$($result.RebootRequired) Success=$($result.Success)"
+            return $result
+        }
+
+        Write-Log "PSWindowsUpdate did not succeed. COM fallback will be attempted."
     }
     else {
         Write-Log "Skipping PSWindowsUpdate method because module setup failed or cmdlets are unavailable."
     }
 
-    if (-not $result -or -not $result.Success) {
-        Write-Log "Falling back to COM Windows Update method."
-        $result = Invoke-COMWindowsUpdateMethod
-    }
+    Write-Log "Falling back to COM Windows Update method."
+    $result = Invoke-COMWindowsUpdateMethod
 
     if (-not $result) {
         $result = New-UpdateResultObject
@@ -1034,7 +1040,7 @@ function Invoke-WindowsUpdateRemediation {
 # ---------------------------------------------------------------------
 Initialize-Logging
 Write-Log "===== REMEDIATION SCRIPT START ====="
-Write-Log "SCRIPT VERSION: 2026-03-30 REMEDIATION-OUTPUT-V2"
+Write-Log "SCRIPT VERSION: 2026-03-30 REMEDIATION-OUTPUT-V3"
 
 try {
     Write-Log "Detection already determined this device requires remediation."

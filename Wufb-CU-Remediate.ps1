@@ -5,7 +5,8 @@
 
 .DESCRIPTION
     This remediation script assumes detection already determined the device is non-compliant.
-    It performs Windows Update cleanup/repair actions, then attempts update installation.
+    It performs Windows Update cleanup/repair actions, optionally repairs the component store,
+    then attempts update installation.
 
 .POST-REMEDIATION OUTPUT
     Outputs a clear summary for Intune, including:
@@ -28,20 +29,21 @@ $global:LogPath   = Join-Path $global:LogFolder "WindowsUpdate-Compliance-Remedi
 # ---------------------------------------------------------------------
 # Pre-Repair Configuration
 # ---------------------------------------------------------------------
-$fullRepair             = 0
-$resetWUComponents      = 1
-$cleanupRegistry        = 1
-$reregisterDLLs         = 1
-$restartIntune          = 1
-$checkAutopatch         = 1
-$clearRebootFlags       = 1
-$verifyCriticalServices = 1
-$configureAppReadiness  = 1
-$runDiskCleanup         = 0
-$removePolicyBlocks     = 1
-$resetWUAgent           = 1
-$refreshPRT             = 1
-$refreshWUPolicies      = 1
+$fullRepair                = 0
+$autoRepairComponentStore  = 1
+$resetWUComponents         = 1
+$cleanupRegistry           = 1
+$reregisterDLLs            = 1
+$restartIntune             = 1
+$checkAutopatch            = 1
+$clearRebootFlags          = 1
+$verifyCriticalServices    = 1
+$configureAppReadiness     = 1
+$runDiskCleanup            = 0
+$removePolicyBlocks        = 1
+$resetWUAgent              = 1
+$refreshPRT                = 1
+$refreshWUPolicies         = 1
 
 $criticalServices = @{
     'wuauserv'                  = 'Windows Update'
@@ -193,6 +195,67 @@ function Test-RebootPending {
     catch {
         Write-Log "Error checking reboot pending state: $($_.Exception.Message)"
         return $false
+    }
+}
+
+function Invoke-ComponentStoreRepair {
+    Write-Log "Starting component store health check"
+
+    $result = [PSCustomObject]@{
+        CheckHealthExitCode    = $null
+        RestoreHealthExitCode  = $null
+        SfcExitCode            = $null
+        RepairAttempted        = $false
+        RepairSucceeded        = $false
+        Details                = ""
+    }
+
+    try {
+        $checkArgs = "/Online /Cleanup-Image /CheckHealth"
+        Write-Log "Running: DISM.exe $checkArgs"
+
+        $checkProcess = Start-Process -FilePath "DISM.exe" -ArgumentList $checkArgs -Wait -PassThru -NoNewWindow -ErrorAction Stop
+        $result.CheckHealthExitCode = $checkProcess.ExitCode
+        Write-Log "DISM CheckHealth exit code: $($result.CheckHealthExitCode)"
+
+        if ($checkProcess.ExitCode -eq 0) {
+            Write-Log "DISM CheckHealth completed successfully"
+        }
+        else {
+            Write-Log "DISM CheckHealth returned non-zero exit code. A repair attempt will still be made."
+        }
+
+        $result.RepairAttempted = $true
+
+        $restoreArgs = "/Online /Cleanup-Image /RestoreHealth"
+        Write-Log "Running: DISM.exe $restoreArgs"
+
+        $restoreProcess = Start-Process -FilePath "DISM.exe" -ArgumentList $restoreArgs -Wait -PassThru -NoNewWindow -ErrorAction Stop
+        $result.RestoreHealthExitCode = $restoreProcess.ExitCode
+        Write-Log "DISM RestoreHealth exit code: $($result.RestoreHealthExitCode)"
+
+        if ($restoreProcess.ExitCode -eq 0) {
+            Write-Log "DISM RestoreHealth completed successfully"
+            $result.RepairSucceeded = $true
+        }
+        else {
+            Write-Log "DISM RestoreHealth completed with non-zero exit code"
+        }
+
+        $sfcArgs = "/scannow"
+        Write-Log "Running: sfc.exe $sfcArgs"
+
+        $sfcProcess = Start-Process -FilePath "sfc.exe" -ArgumentList $sfcArgs -Wait -PassThru -NoNewWindow -ErrorAction Stop
+        $result.SfcExitCode = $sfcProcess.ExitCode
+        Write-Log "SFC exit code: $($result.SfcExitCode)"
+
+        $result.Details = "CheckHealth=$($result.CheckHealthExitCode); RestoreHealth=$($result.RestoreHealthExitCode); SFC=$($result.SfcExitCode)"
+        return $result
+    }
+    catch {
+        $result.Details = $_.Exception.Message
+        Write-Log "Component store repair failed: $($_.Exception.Message)"
+        return $result
     }
 }
 
@@ -408,6 +471,14 @@ function Invoke-PreUpdateCleanup {
     }
     else {
         Write-Log "Full repair mode disabled"
+    }
+
+    if ($autoRepairComponentStore -eq 1) {
+        $componentRepairResult = Invoke-ComponentStoreRepair
+        Write-Log "Component store repair summary: RepairAttempted=$($componentRepairResult.RepairAttempted) RepairSucceeded=$($componentRepairResult.RepairSucceeded) Details=$($componentRepairResult.Details)"
+    }
+    else {
+        Write-Log "Automatic component store repair disabled in configuration"
     }
 
     if ($resetWUComponents -eq 1) {
@@ -1040,7 +1111,7 @@ function Invoke-WindowsUpdateRemediation {
 # ---------------------------------------------------------------------
 Initialize-Logging
 Write-Log "===== REMEDIATION SCRIPT START ====="
-Write-Log "SCRIPT VERSION: 2026-03-30 REMEDIATION-OUTPUT-V3"
+Write-Log "SCRIPT VERSION: 2026-03-31 REMEDIATION-AUTODISM-V1"
 
 try {
     Write-Log "Detection already determined this device requires remediation."

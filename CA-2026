@@ -1,0 +1,82 @@
+Changelog v2026.2.1
+CA005 - migration obligatoire. Microsoft déprécie le contrôle Require approved client app en mars 2026. CA005 bascule sur RequireAppProtection (Intune MAM). Les tenants qui s’appuient encore sur l’ancien contrôle pour protéger l’accès à Office 365 depuis des appareils non gérés sont directement concernés.
+
+CA501 - nouvelle politique, nouvelle persona. Une politique template ciblant les agents à haut risque est intégrée au framework. Elle s’accompagne d’une nouvelle persona dédiée : Agents.
+
+Personas
+Le framework organise ses politiques autour de six personas. Chacune correspond à un profil d’identité distinct, avec ses propres exigences de sécurité et son périmètre d’application.
+
+Global regroupe les politiques transversales applicables à toutes les identités, ou couvrant des scénarios non rattachables à une persona unique. C’est le socle commun du framework.
+
+Admins cible toute identité non invitée - synchronisée ou cloud - disposant d’un rôle d’administration Microsoft 365 ou Azure AD (Exchange, MDCA, Defender for Endpoint, Compliance…). Les comptes invités avec des rôles admin relèvent de la persona Guests.
+
+Internals désigne les utilisateurs avec un compte AD synchronisé, employés de l’organisation, en rôle utilisateur standard.
+
+Guests regroupe les comptes invités Azure AD (B2B) invités dans le tenant.
+
+Service accounts couvre les identités non humaines : comptes de service, identités utilisées par des automatisations ou des applications.
+
+Agents couvre les ressources agentiques gérables via Conditional Access. Persona introduite en v2026.2.1, elle ne contient pour l’instant qu’une seule politique.
+
+CA000-CA006 - Global policies
+Le socle transversal du framework. Ces politiques s’appliquent indépendamment des personas et ciblent les vecteurs de compromission les plus directs : authentification legacy, transferts de flux, protection des données sur appareils non gérés.
+
+ID	Politique (nom exact)	Persona(s)	Intention	Contrôle principal	Pré-requis	Analyse
+CA000	Global-IdentityProtection-AnyApp-AnyPlatform-MFA	Toutes (hors break-glass)	Identity Protection	MFA	MFA activée	⏳
+CA001	Global-AttackSurfaceReduction-AnyApp-AnyPlatform-BLOCK-CountryWhitelist	Toutes	Attack Surface Reduction	Blocage géographique	Named location ALLOWED COUNTRIES configurée	⏳
+CA002	Global-IdentityProtection-AnyApp-AnyPlatform-Block-LegacyAuthentication	Toutes	Identity Protection	Block legacy auth	Aucun	⏳
+CA003	Global-BaseProtection-RegisterOrJoin-AnyPlatform-MFA	Toutes	Base Protection	MFA	MFA + désactivation du paramètre natif d’enregistrement d’appareils	⏳
+CA004	Global-IdentityProtection-AnyApp-AnyPlatform-AuthenticationFlows	Toutes	Identity Protection	Blocage des transferts de flux d’auth (device code flow)	Fonctionnalité en preview	⏳
+CA005	Global-DataProtection-Office365-AnyPlatform-Unmanaged-RequireAppProtection	Toutes	Data Protection	App Protection Policies (Intune MAM)	Intune MAM, appareils non gérés	⏳
+CA006	Global-DataProtection-Office365-iOSandAndroid-RequireAppProtection	Toutes	Data Protection	App protection iOS/Android	Intune MAM	⏳
+CA005 : le contrôle Require approved client app est déprécié par Microsoft en mars 2026. Le nom officiel de la politique est désormais Global-DataProtection-Office365-AnyPlatform-Unmanaged-RequireAppProtection.
+
+CA006 : cette politique sera prochainement modifiée ou supprimée. Elle présente un chevauchement fonctionnel avec CA005.
+
+CA100-CA105 - Admin policies
+Politiques dédiées aux comptes à privilèges. Elles isolent les administrateurs du flux d’authentification standard, réduisent la durée des sessions et imposent des méthodes d’authentification plus robustes.
+
+ID	Politique (nom exact)	Persona(s)	Intention	Contrôle principal	Pré-requis	Analyse
+CA100	Admins-IdentityProtection-AdminPortals-AnyPlatform-MFA	Admins	Identity Protection	MFA sur portails admin	MFA	⏳
+CA101	Admins-IdentityProtection-AnyApp-AnyPlatform-MFA	Admins	Identity Protection	MFA toutes apps	MFA	⏳
+CA102	Admins-IdentityProtection-AllApps-AnyPlatform-SigninFrequency	Admins	Identity Protection	Fréquence de reconnexion (12h max)	Session controls	⏳
+CA103	Admins-IdentityProtection-AllApps-AnyPlatform-PersistentBrowser	Admins	Identity Protection	Sessions non persistantes	Session controls	⏳
+CA104	Admins-IdentityProtection-AllApps-AnyPlatform-ContinuousAccessEvaluation	Admins	Identity Protection	CAE (réévaluation en quasi-temps réel)	Mode ON/OFF uniquement, pas de Report-only	⏳
+CA105	Admins-IdentityProtection-AnyApp-AnyPlatform-PhishingResistantMFA	Admins	Identity Protection	MFA phishing-resistant	FIDO2 / CBA	⏳
+CA200-CA210 - Internals
+Politiques pour les utilisateurs internes standards. Elles couvrent la gestion des risques identité, la conformité des appareils Windows et macOS, et les contrôles de session sur les appareils non gérés.
+
+ID	Politique (nom exact)	Persona(s)	Intention	Contrôle principal	Pré-requis	Analyse
+CA200	Internals-IdentityProtection-AnyApp-AnyPlatform-MFA	Internals	Identity Protection	MFA	MFA	⏳
+CA201	Internals-IdentityProtection-AnyApp-AnyPlatform-BLOCK-HighRiskUser	Internals	Identity Protection	Blocage user risk élevé	Entra ID Protection	⏳
+CA202	Internals-IdentityProtection-AllApps-WindowsMacOS-SigninFrequency-UnmanagedDevices	Internals	Identity Protection	Fréquence de reconnexion (12h) sur appareils non gérés	Détection de conformité appareil	⏳
+CA203	Internals-AppProtection-MicrosoftIntuneEnrollment-AnyPlatform-MFA	Internals	App Protection	MFA à l’enrôlement Intune	Intune - exclure les utilisateurs Autopilot Device Preparation v2	⏳
+CA204	Internals-AttackSurfaceReduction-AllApps-AnyPlatform-BlockUnknownPlatforms	Internals	Attack Surface Reduction	Blocage plateformes inconnues	Détection de plateforme	⏳
+CA205	Internals-BaseProtection-AnyApp-Windows-CompliantorAADHJ	Internals	Base Protection	Conformité ou Hybrid Join (Windows)	Intune / Entra Hybrid Join	⏳
+CA206	Internals-IdentityProtection-AllApps-AnyPlatform-PersistentBrowser	Internals	Identity Protection	Sessions non persistantes (appareils non gérés)	Session controls	⏳
+CA207	Internals-AttackSurfaceReduction-SelectedApps-AnyPlatform-BLOCK	Internals	Attack Surface Reduction	Blocage d’applications spécifiques	Ciblage applicatif	⏳
+CA208	Internals-BaseProtection-AnyApp-MacOS-Compliant	Internals	Base Protection	Conformité appareil macOS	Intune	⏳
+CA209	Internals-IdentityProtection-AllApps-AnyPlatform-ContinuousAccessEvaluation	Internals	Identity Protection	CAE	Mode ON/OFF uniquement, pas de Report-only	⏳
+CA210	Internals-IdentityProtection-AnyApp-AnyPlatform-BLOCK-HighRiskSignIn	Internals	Identity Protection	Blocage sign-in risk élevé	Entra ID Protection	⏳
+CA210 : cette politique n’est pas présente dans les fichiers exportés du dépôt GitHub à date. À vérifier avant déploiement.
+
+CA300-CA301 - Service accounts
+Politiques pour les identités non humaines. L’enjeu est de contraindre leur périmètre d’accès géographique et d’imposer une authentification forte, sans chercher à appliquer des contrôles de session conçus pour des utilisateurs interactifs.
+
+ID	Politique (nom exact)	Persona(s)	Intention	Contrôle principal	Pré-requis	Analyse
+CA300	ServiceAccounts-IdentityProtection-AnyApp-AnyPlatform-MFA	Service accounts	Identity Protection	MFA	MFA supportée par le compte	⏳
+CA301	ServiceAccounts-AttackSurfaceReduction-AllApps-AnyPlatform-BlockUntrustedLocations	Service accounts	Attack Surface Reduction	Blocage des localisations non approuvées	Named location ALLOWED COUNTRIES - SERVICE ACCOUNTS	⏳
+CA400-CA404 - Guest users
+Politiques pour les identités externes. Le niveau de confiance de départ est volontairement bas : les guests sont bloqués par défaut sur toutes les applications hors exceptions explicites, et soumis à des contrôles de session stricts.
+
+ID	Politique (nom exact)	Persona(s)	Intention	Contrôle principal	Pré-requis	Analyse
+CA400	GuestUsers-IdentityProtection-AnyApp-AnyPlatform-MFA	Guests	Identity Protection	MFA	B2B MFA	⏳
+CA401	GuestUsers-AttackSurfaceReduction-AllApps-AnyPlatform-BlockNonGuestAppAccess	Guests	Attack Surface Reduction	Blocage de toutes les apps hors exceptions	Ciblage applicatif	⏳
+CA402	GuestUsers-IdentityProtection-AllApps-AnyPlatform-SigninFrequency	Guests	Identity Protection	Fréquence de reconnexion (12h)	Session controls	⏳
+CA403	GuestUsers-IdentityProtection-AllApps-AnyPlatform-PersistentBrowser	Guests	Identity Protection	Sessions non persistantes	Session controls	⏳
+CA404	GuestUsers-AttackSurfaceReduction-SelectedApps-AnyPlatform-BLOCK	Guests	Attack Surface Reduction	Blocage d’applications spécifiques	Ciblage applicatif	⏳
+CA501 - Agents (v2026.2.1)
+Nouvelle persona introduite pour couvrir les ressources agentiques gérables via Conditional Access. Un seul fichier de politique à ce stade, conçu comme template.
+
+ID	Politique (nom exact)	Persona(s)	Intention	Contrôle principal	Pré-requis	Analyse
+CA501	Agents-IdentityProtection-AnyApp-AnyPlatform-BLOCK-HighRiskAgent	Agents	Identity Protection	Blocage des agents à haut risque	Entra ID Protection (workload identities)	⏳

@@ -9,11 +9,10 @@
     then attempts update installation.
 
 .POST-REMEDIATION OUTPUT
-    Outputs a clear summary for Intune, including:
-    - method used
-    - updates found
-    - updates installed
-    - reboot required
+    Outputs:
+    - technical remediation summary
+    - friendly CU install summary
+    - scheduled reboot status when a reboot is required
 
 .EXIT CODES
     0 = remediation completed
@@ -67,7 +66,7 @@ function Initialize-Logging {
         }
     }
     catch {
-        Write-Output "Logging init failed: $($_.Exception.Message)"
+        Write-Verbose "Logging init failed: $($_.Exception.Message)"
     }
 }
 
@@ -80,13 +79,11 @@ function Write-Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $line = "$timestamp - $Message"
 
-    Write-Output $line
-
     try {
         Add-Content -Path $global:LogPath -Value $line -ErrorAction Stop
     }
     catch {
-        Write-Output "$timestamp - LOG WRITE FAILED: $($_.Exception.Message)"
+        Write-Verbose "LOG WRITE FAILED: $($_.Exception.Message)"
     }
 }
 
@@ -198,6 +195,197 @@ function Test-RebootPending {
     }
 }
 
+function Get-OSBuildInfo {
+    try {
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop
+        return [PSCustomObject]@{
+            CurrentBuild = [string]$cv.CurrentBuildNumber
+            UBR          = [string]$cv.UBR
+            FullVersion  = "10.0.$($cv.CurrentBuildNumber).$($cv.UBR)"
+        }
+    }
+    catch {
+        Write-Log "Could not read current OS build info: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+# ---------------------------------------------------------------------
+# Scheduled Reboot Helpers
+# ---------------------------------------------------------------------
+function Get-NextOneAM {
+    try {
+        $now = Get-Date
+        $target = Get-Date -Hour 1 -Minute 0 -Second 0
+
+        if ($now -ge $target) {
+            $target = $target.AddDays(1)
+        }
+
+        return $target
+    }
+    catch {
+        Write-Log "Failed to calculate next 1 AM reboot time: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Register-ForcedRebootScheduledTask {
+    param(
+        [string]$TaskName = "Intune-WindowsUpdate-ForcedReboot-1AM"
+    )
+
+    try {
+        $nextRun = Get-NextOneAM
+        if (-not $nextRun) {
+            throw "Could not determine next 1 AM run time."
+        }
+
+        Write-Log "Preparing scheduled reboot task '$TaskName' for $($nextRun.ToString('yyyy-MM-dd HH:mm:ss'))"
+
+        try {
+            $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+            if ($existingTask) {
+                Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+                Write-Log "Removed existing scheduled task '$TaskName'"
+            }
+        }
+        catch {
+            Write-Log "Could not remove existing scheduled task '$TaskName': $($_.Exception.Message)"
+        }
+
+        $action = New-ScheduledTaskAction -Execute "shutdown.exe" -Argument "/r /f /t 0"
+        $trigger = New-ScheduledTaskTrigger -Once -At $nextRun
+        $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable `
+            -MultipleInstances IgnoreNew
+
+        $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+
+        Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
+
+        Write-Log "Scheduled reboot task '$TaskName' created successfully for $($nextRun.ToString('yyyy-MM-dd HH:mm:ss'))"
+        return $true
+    }
+    catch {
+        Write-Log "Failed to create scheduled reboot task: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# ---------------------------------------------------------------------
+# Friendly Summary Helpers
+# ---------------------------------------------------------------------
+function Get-RecentlyDetectedOrInstalledCUInfo {
+    param(
+        [datetime]$WindowStart = (Get-Date).AddMinutes(-120)
+    )
+
+    try {
+        if (-not (Get-Command Get-WUHistory -ErrorAction SilentlyContinue)) {
+            Write-Log "Get-WUHistory cmdlet not available; cannot determine recent CU info from PSWindowsUpdate."
+            return $null
+        }
+
+        $history = Get-WUHistory -MaxDate (Get-Date) -ErrorAction SilentlyContinue | Select-Object -First 150
+        if (-not $history) {
+            Write-Log "No Windows Update history returned."
+            return $null
+        }
+
+        $recentCU = $history | Where-Object {
+            $_.Date -ge $WindowStart -and
+            (
+                $_.Title -match 'Cumulative Update' -or
+                $_.Title -match 'KB\d{7}'
+            )
+        } | Select-Object -First 1
+
+        if (-not $recentCU) {
+            Write-Log "No recent cumulative update was found in WU history."
+            return $null
+        }
+
+        $kbMatch = [regex]::Match($recentCU.Title, 'KB\d{7}')
+        $kb = if ($kbMatch.Success) { $kbMatch.Value } else { "UnknownKB" }
+
+        $succeeded = $false
+        if ($recentCU.PSObject.Properties.Name -contains 'ResultCode') {
+            if ($recentCU.ResultCode -eq 2) { $succeeded = $true }
+        }
+        elseif ($recentCU.PSObject.Properties.Name -contains 'Result') {
+            if ($recentCU.Result -match 'Succeeded') { $succeeded = $true }
+        }
+
+        return [PSCustomObject]@{
+            KB        = $kb
+            Title     = $recentCU.Title
+            Date      = $recentCU.Date
+            Succeeded = $succeeded
+        }
+    }
+    catch {
+        Write-Log "Could not determine recent CU info: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Get-FriendlyUpdateSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$UpdateResult
+    )
+
+    try {
+        $osInfo = Get-OSBuildInfo
+        $currentVersion = if ($osInfo) { $osInfo.FullVersion } else { "UnknownVersion" }
+        $recentCU = Get-RecentlyDetectedOrInstalledCUInfo
+
+        if (-not $UpdateResult.Success) {
+            if ($recentCU) {
+                return "CU DETECTED $($recentCU.KB) - Download/install failed - Current version $currentVersion"
+            }
+            return "UPDATE REMEDIATION FAILED - $($UpdateResult.Details)"
+        }
+
+        if ($UpdateResult.UpdatesInstalled -le 0) {
+            if ($recentCU -and -not $recentCU.Succeeded) {
+                return "CU DETECTED $($recentCU.KB) - Download/install failed - Current version $currentVersion"
+            }
+
+            if ($UpdateResult.RebootRequired) {
+                return "NO NEW UPDATES INSTALLED - Reboot still required - Current version $currentVersion"
+            }
+
+            return "NO UPDATES INSTALLED - Current version $currentVersion"
+        }
+
+        if ($recentCU) {
+            if ($UpdateResult.RebootRequired) {
+                return "CU INSTALLED $($recentCU.KB) - Reboot required - Current live version still $currentVersion until reboot"
+            }
+            else {
+                return "CU INSTALLED $($recentCU.KB) - No reboot required - Current version $currentVersion"
+            }
+        }
+
+        if ($UpdateResult.RebootRequired) {
+            return "UPDATES INSTALLED ($($UpdateResult.UpdatesInstalled)) - Reboot required - Current live version still $currentVersion until reboot"
+        }
+
+        return "UPDATES INSTALLED ($($UpdateResult.UpdatesInstalled)) - No reboot required - Current version $currentVersion"
+    }
+    catch {
+        return "Could not build friendly update summary: $($_.Exception.Message)"
+    }
+}
+
+# ---------------------------------------------------------------------
+# Component Store Repair
+# ---------------------------------------------------------------------
 function Invoke-ComponentStoreRepair {
     Write-Log "Starting component store health check"
 
@@ -218,13 +406,6 @@ function Invoke-ComponentStoreRepair {
         $result.CheckHealthExitCode = $checkProcess.ExitCode
         Write-Log "DISM CheckHealth exit code: $($result.CheckHealthExitCode)"
 
-        if ($checkProcess.ExitCode -eq 0) {
-            Write-Log "DISM CheckHealth completed successfully"
-        }
-        else {
-            Write-Log "DISM CheckHealth returned non-zero exit code. A repair attempt will still be made."
-        }
-
         $result.RepairAttempted = $true
 
         $restoreArgs = "/Online /Cleanup-Image /RestoreHealth"
@@ -235,8 +416,8 @@ function Invoke-ComponentStoreRepair {
         Write-Log "DISM RestoreHealth exit code: $($result.RestoreHealthExitCode)"
 
         if ($restoreProcess.ExitCode -eq 0) {
-            Write-Log "DISM RestoreHealth completed successfully"
             $result.RepairSucceeded = $true
+            Write-Log "DISM RestoreHealth completed successfully"
         }
         else {
             Write-Log "DISM RestoreHealth completed with non-zero exit code"
@@ -924,6 +1105,9 @@ function Invoke-PSWindowsUpdateMethod {
         Write-Log "Checking for available updates via PSWindowsUpdate."
 
         $scanOutput = Get-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -ErrorAction Stop -Verbose 4>&1 | Out-String
+        $installFailed = $false
+        $installSucceeded = $false
+
         if ($scanOutput -and $scanOutput.Trim().Length -gt 0) {
             foreach ($line in ($scanOutput -split "`r?`n")) {
                 if ($line -and $line.Trim().Length -gt 0) {
@@ -933,9 +1117,9 @@ function Invoke-PSWindowsUpdateMethod {
         }
 
         $updates = @(Get-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -ErrorAction Stop)
-        $result.UpdatesFound = $updates.Count
+        $result.UpdatesFound = @($updates).Count
 
-        if (-not $updates -or $updates.Count -eq 0) {
+        if ($result.UpdatesFound -eq 0) {
             Write-Log "No updates found via PSWindowsUpdate."
             $result.Success = $true
             $result.Details = "No updates found"
@@ -943,7 +1127,7 @@ function Invoke-PSWindowsUpdateMethod {
             return $result
         }
 
-        Write-Log "Updates found via PSWindowsUpdate: $($updates.Count)"
+        Write-Log "Updates found via PSWindowsUpdate: $($result.UpdatesFound)"
         foreach ($u in $updates) {
             Write-Log "PSWindowsUpdate candidate: $($u.Title)"
         }
@@ -955,38 +1139,67 @@ function Invoke-PSWindowsUpdateMethod {
             foreach ($line in ($installOutput -split "`r?`n")) {
                 if ($line -and $line.Trim().Length -gt 0) {
                     Write-Log $line.TrimEnd()
+
+                    if ($line -match 'Failed\s+KB\d{7}') {
+                        $installFailed = $true
+                    }
+                    if ($line -match 'Installed\s+\[(\d+)\]\s+Updates') {
+                        if ([int]$matches[1] -gt 0) {
+                            $installSucceeded = $true
+                            $result.UpdatesInstalled = [int]$matches[1]
+                        }
+                    }
+                    if ($line -match 'Downloaded\s+\[(\d+)\]\s+Updates ready to Install') {
+                        if ([int]$matches[1] -eq 0) {
+                            $installFailed = $true
+                        }
+                    }
                 }
             }
         }
 
-        $installedCount = 0
-        try {
-            $history = Get-WUHistory -MaxDate (Get-Date) -ErrorAction SilentlyContinue | Select-Object -First 50
-            if ($history) {
-                $recentWindow = (Get-Date).AddMinutes(-30)
-                $recentInstalled = $history | Where-Object {
-                    $_.Date -ge $recentWindow -and (
-                        $_.Result -match 'Succeeded' -or
-                        $_.ResultCode -eq 2
-                    )
+        if (-not $installSucceeded) {
+            try {
+                if (Get-Command Get-WUHistory -ErrorAction SilentlyContinue) {
+                    $history = Get-WUHistory -MaxDate (Get-Date) -ErrorAction SilentlyContinue | Select-Object -First 100
+                    if ($history) {
+                        $recentWindow = (Get-Date).AddMinutes(-60)
+                        $recentInstalled = $history | Where-Object {
+                            $_.Date -ge $recentWindow -and (
+                                ($_.PSObject.Properties.Name -contains 'ResultCode' -and $_.ResultCode -eq 2) -or
+                                ($_.PSObject.Properties.Name -contains 'Result' -and $_.Result -match 'Succeeded')
+                            )
+                        }
+                        $result.UpdatesInstalled = @($recentInstalled).Count
+                        if ($result.UpdatesInstalled -gt 0) {
+                            $installSucceeded = $true
+                        }
+                    }
                 }
-                $installedCount = @($recentInstalled).Count
+            }
+            catch {
+                Write-Log "Could not read WU history after PSWindowsUpdate install: $($_.Exception.Message)"
             }
         }
-        catch {
-            Write-Log "Could not read WU history after PSWindowsUpdate install: $($_.Exception.Message)"
-        }
 
-        if ($installedCount -le 0 -and $updates.Count -gt 0) {
-            $installedCount = $updates.Count
-        }
-
-        $result.UpdatesInstalled = $installedCount
         $result.RebootRequired = Test-RebootPending
-        $result.Success = $true
-        $result.Details = "PSWindowsUpdate completed"
 
-        Write-Log "PSWindowsUpdate method completed. Installed=$($result.UpdatesInstalled) RebootRequired=$($result.RebootRequired)"
+        if ($installSucceeded -and $result.UpdatesInstalled -gt 0) {
+            $result.Success = $true
+            $result.Details = "PSWindowsUpdate completed"
+        }
+        elseif ($installFailed) {
+            $result.Success = $false
+            $result.UpdatesInstalled = 0
+            $result.Details = "Update download or install failed"
+        }
+        else {
+            $result.Success = $false
+            $result.UpdatesInstalled = 0
+            $result.Details = "Could not confirm update installation"
+        }
+
+        Write-Log "PSWindowsUpdate method completed. Installed=$($result.UpdatesInstalled) RebootRequired=$($result.RebootRequired) Success=$($result.Success)"
         return $result
     }
     catch {
@@ -1053,8 +1266,13 @@ function Invoke-COMWindowsUpdateMethod {
 
         $result.UpdatesInstalled = $installedCount
         $result.RebootRequired = [bool]$installResult.RebootRequired
-        $result.Success = $true
-        $result.Details = "COM install completed"
+        $result.Success = ($installedCount -gt 0)
+        if ($result.Success) {
+            $result.Details = "COM install completed"
+        }
+        else {
+            $result.Details = "COM install did not confirm any installed updates"
+        }
 
         Write-Log "Installation completed with result code: $($installResult.ResultCode)"
         Write-Log "Updates installed via COM: $installedCount"
@@ -1111,7 +1329,7 @@ function Invoke-WindowsUpdateRemediation {
 # ---------------------------------------------------------------------
 Initialize-Logging
 Write-Log "===== REMEDIATION SCRIPT START ====="
-Write-Log "SCRIPT VERSION: 2026-03-31 REMEDIATION-AUTODISM-V1"
+Write-Log "SCRIPT VERSION: 2026-04-14 REMEDIATION-1AM-REBOOT-V1"
 
 try {
     Write-Log "Detection already determined this device requires remediation."
@@ -1122,8 +1340,27 @@ try {
     $updateResult = Invoke-WindowsUpdateRemediation
 
     $summary = "Remediation summary | Method=$($updateResult.Method) | UpdatesFound=$($updateResult.UpdatesFound) | UpdatesInstalled=$($updateResult.UpdatesInstalled) | RebootRequired=$($updateResult.RebootRequired) | Success=$($updateResult.Success) | Details=$($updateResult.Details)"
+    $friendlySummary = Get-FriendlyUpdateSummary -UpdateResult $updateResult
+
+    if ($updateResult.RebootRequired) {
+        $taskCreated = Register-ForcedRebootScheduledTask
+
+        if ($taskCreated) {
+            $rebootMessage = "Reboot required. Scheduled forced reboot at next 1:00 AM."
+        }
+        else {
+            $rebootMessage = "Reboot required, but failed to create scheduled reboot task."
+        }
+
+        Write-Log $rebootMessage
+        Write-Output $rebootMessage
+    }
+
     Write-Log $summary
+    Write-Log $friendlySummary
+
     Write-Output $summary
+    Write-Output $friendlySummary
 
     Write-Log "===== REMEDIATION SCRIPT END ====="
     exit 0
@@ -1134,8 +1371,8 @@ catch {
 
     Write-Log $errorMessage
     Write-Log $errorDetails
-    Write-Output $errorMessage
     Write-Log "===== REMEDIATION SCRIPT END ====="
 
+    Write-Output $errorMessage
     exit 1
 }

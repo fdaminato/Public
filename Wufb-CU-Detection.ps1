@@ -15,12 +15,12 @@
 # Configuration
 # ---------------------------------------------------------------------
 $LogFolder = "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs"
-$LogPath   = Join-Path $LogFolder "WindowsUpdate-Compliance-Detect.log"
+$LogPath   = Join-Path $LogFolder "WindowsUpdate-Compliance-Detect_florian.log"
 
 $MinimumRequiredQualityByBuild = @{
-    '26100' = 7840
-    '26200' = 7840
-    '26300' = 7840
+    '26100' = 8037
+    '26200' = 8037
+    '26300' = 8037
 }
 
 $AllowHigherBuildBranches = $false
@@ -39,7 +39,7 @@ function Initialize-Logging {
         }
     }
     catch {
-        Write-Output "Logging init failed: $($_.Exception.Message)"
+        Write-Verbose "Logging init failed: $($_.Exception.Message)"
     }
 }
 
@@ -52,13 +52,11 @@ function Write-Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $line = "$timestamp - $Message"
 
-    Write-Output $line
-
     try {
         Add-Content -Path $LogPath -Value $line -ErrorAction Stop
     }
     catch {
-        Write-Output "$timestamp - LOG WRITE FAILED: $($_.Exception.Message)"
+        Write-Verbose "LOG WRITE FAILED: $($_.Exception.Message)"
     }
 }
 
@@ -79,6 +77,28 @@ function Get-OSBuildInfo {
     }
     catch {
         throw "Unable to read OS version from registry: $($_.Exception.Message)"
+    }
+}
+
+function Test-RebootPending {
+    try {
+        $paths = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired",
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+        )
+
+        if (Test-Path $paths[0]) { return $true }
+        if (Test-Path $paths[1]) { return $true }
+
+        $pendingFileRename = Get-ItemProperty -Path $paths[2] -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+        if ($null -ne $pendingFileRename.PendingFileRenameOperations) { return $true }
+
+        return $false
+    }
+    catch {
+        Write-Log "Error checking reboot pending state: $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -158,7 +178,7 @@ function Test-QualityCompliance {
 # ---------------------------------------------------------------------
 Initialize-Logging
 Write-Log "===== DETECTION SCRIPT START ====="
-Write-Log "SCRIPT VERSION: 2026-03-30 DETECTION-V3"
+Write-Log "SCRIPT VERSION: 2026-03-31 DETECTION-NOLOOKUPTABLE-V2"
 
 try {
     if (-not $MinimumRequiredQualityByBuild -or $MinimumRequiredQualityByBuild.Count -eq 0) {
@@ -175,40 +195,43 @@ try {
     $osInfo = Get-OSBuildInfo
     Write-Log "Detected OS: ProductName='$($osInfo.ProductName)', DisplayVersion='$($osInfo.DisplayVersion)', FullVersion='$($osInfo.FullVersion)'"
 
+    $rebootPending = Test-RebootPending
+    Write-Log "Reboot pending state: $rebootPending"
+
     $complianceResult = Test-QualityCompliance -CurrentOS $osInfo
 
     Write-Log "Returned compliance object: Compliant='$($complianceResult.Compliant)' Reason='$($complianceResult.Reason)' RequiredBuild='$($complianceResult.RequiredBuild)' RequiredUBR='$($complianceResult.RequiredUBR)'"
 
     if ([bool]$complianceResult.Compliant -eq $true) {
-        $summary = "Detection summary | Compliant=True | CurrentVersion=$($osInfo.FullVersion) | Reason=OK"
+        $summary = "Detection summary | Compliant=True | CurrentVersion=$($osInfo.FullVersion) | RebootPending=$rebootPending | Reason=OK"
         Write-Log $summary
+        Write-Log "===== DETECTION SCRIPT END ====="
         Write-Output $summary
-        Write-Log "$summary"
         exit 0
     }
 
     switch ($complianceResult.Reason) {
         "UBR_TOO_LOW" {
-            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | RequiredMinimum=10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR) | Reason=UBR_TOO_LOW"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | RequiredMinimum=10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR) | RebootPending=$rebootPending | Reason=UBR_TOO_LOW"
         }
         "HIGHER_BRANCH_UBR_TOO_LOW" {
-            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | RequiredMinimum=10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR) | Reason=HIGHER_BRANCH_UBR_TOO_LOW"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | RequiredMinimum=10.0.$($complianceResult.RequiredBuild).$($complianceResult.RequiredUBR) | RebootPending=$rebootPending | Reason=HIGHER_BRANCH_UBR_TOO_LOW"
         }
         "WRONG_BRANCH" {
             $allowedBranches = @()
             foreach ($key in ($MinimumRequiredQualityByBuild.Keys | Sort-Object)) {
                 $allowedBranches += "10.0.$key.$($MinimumRequiredQualityByBuild[$key])"
             }
-            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | AllowedMinimumVersions=$($allowedBranches -join '; ') | Reason=WRONG_BRANCH"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | AllowedMinimumVersions=$($allowedBranches -join '; ') | RebootPending=$rebootPending | Reason=WRONG_BRANCH"
         }
         default {
-            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | Reason=$($complianceResult.Reason)"
+            $summary = "Detection summary | Compliant=False | CurrentVersion=$($osInfo.FullVersion) | RebootPending=$rebootPending | Reason=$($complianceResult.Reason)"
         }
     }
 
     Write-Log $summary
+    Write-Log "===== DETECTION SCRIPT END ====="
     Write-Output $summary
-    Write-Log "$summary"
     exit 1
 }
 catch {
@@ -217,8 +240,7 @@ catch {
 
     Write-Log $errorMessage
     Write-Log $errorDetails
+    Write-Log "===== DETECTION SCRIPT END ====="
     Write-Output $errorMessage
-    Write-Log "$errorDetails"
-
     exit 1
 }

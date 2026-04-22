@@ -230,6 +230,73 @@ function Get-NextOneAM {
     }
 }
 
+function Test-WakeTimersEnabled {
+    try {
+        $output = powercfg /q SCHEME_CURRENT SUB_SLEEP RTCWAKE 2>$null | Out-String
+        if ($output -match 'Current AC Power Setting Index:\s*0x0' -and $output -match 'Current DC Power Setting Index:\s*0x0') {
+            return $false
+        }
+
+        return $true
+    }
+    catch {
+        Write-Log "Could not verify wake timer settings: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Enable-WakeTimersForBatteryAndAC {
+    try {
+        Write-Log "Configuring Allow wake timers for AC and battery."
+
+        $beforeOutput = powercfg /q SCHEME_CURRENT SUB_SLEEP RTCWAKE 2>$null | Out-String
+        if ($beforeOutput) {
+            foreach ($line in ($beforeOutput -split "`r?`n")) {
+                if ($line -and $line.Trim().Length -gt 0) {
+                    Write-Log "RTCWAKE BEFORE: $($line.TrimEnd())"
+                }
+            }
+        }
+
+        & powercfg /setacvalueindex scheme_current sub_sleep rtcwake 1 | Out-Null
+        & powercfg /setdcvalueindex scheme_current sub_sleep rtcwake 1 | Out-Null
+        & powercfg /S scheme_current | Out-Null
+
+        Start-Sleep -Seconds 1
+
+        $afterOutput = powercfg /q SCHEME_CURRENT SUB_SLEEP RTCWAKE 2>$null | Out-String
+        if ($afterOutput) {
+            foreach ($line in ($afterOutput -split "`r?`n")) {
+                if ($line -and $line.Trim().Length -gt 0) {
+                    Write-Log "RTCWAKE AFTER: $($line.TrimEnd())"
+                }
+            }
+        }
+
+        $acEnabled = $false
+        $dcEnabled = $false
+
+        if ($afterOutput -match 'Current AC Power Setting Index:\s*0x00000001') {
+            $acEnabled = $true
+        }
+        if ($afterOutput -match 'Current DC Power Setting Index:\s*0x00000001') {
+            $dcEnabled = $true
+        }
+
+        if ($acEnabled -and $dcEnabled) {
+            Write-Log "Allow wake timers successfully enabled for both AC and battery."
+            return $true
+        }
+
+        Write-Log "Warning: Could not confirm Allow wake timers is enabled for both AC and battery."
+        return $false
+    }
+    catch {
+        Write-Log "Failed to configure Allow wake timers: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 function Register-ForcedRebootScheduledTask {
     param(
         [string]$TaskName = "Intune-WindowsUpdate-ForcedReboot-1AM"
@@ -242,6 +309,25 @@ function Register-ForcedRebootScheduledTask {
         }
 
         Write-Log "Preparing scheduled reboot task '$TaskName' for $($nextRun.ToString('yyyy-MM-dd HH:mm:ss'))"
+
+        $wakeTimerConfigOk = Enable-WakeTimersForBatteryAndAC
+        if ($wakeTimerConfigOk) {
+            Write-Log "Wake timers are enabled for AC and battery before creating the reboot task."
+        }
+        else {
+            Write-Log "Warning: Wake timers could not be fully confirmed for AC and battery. The task will still be created with WakeToRun."
+        }
+
+        $wakeTimers = Test-WakeTimersEnabled
+        if ($wakeTimers -eq $false) {
+            Write-Log "Warning: Wake timers appear to be disabled in the active power plan. Task may not wake the device from sleep."
+        }
+        elseif ($wakeTimers -eq $true) {
+            Write-Log "Wake timers appear to be enabled in the active power plan."
+        }
+        else {
+            Write-Log "Could not confirm whether wake timers are enabled."
+        }
 
         try {
             $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -261,13 +347,14 @@ function Register-ForcedRebootScheduledTask {
             -AllowStartIfOnBatteries `
             -DontStopIfGoingOnBatteries `
             -StartWhenAvailable `
+            -WakeToRun `
             -MultipleInstances IgnoreNew
 
         $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
 
         Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
 
-        Write-Log "Scheduled reboot task '$TaskName' created successfully for $($nextRun.ToString('yyyy-MM-dd HH:mm:ss'))"
+        Write-Log "Scheduled reboot task '$TaskName' created successfully for $($nextRun.ToString('yyyy-MM-dd HH:mm:ss')) with WakeToRun enabled"
         return $true
     }
     catch {
@@ -1329,7 +1416,7 @@ function Invoke-WindowsUpdateRemediation {
 # ---------------------------------------------------------------------
 Initialize-Logging
 Write-Log "===== REMEDIATION SCRIPT START ====="
-Write-Log "SCRIPT VERSION: 2026-04-14 REMEDIATION-1AM-REBOOT-V1"
+Write-Log "SCRIPT VERSION: 2026-04-22 REMEDIATION-1AM-REBOOT-WAKE-BATTERY-V2"
 
 try {
     Write-Log "Detection already determined this device requires remediation."
@@ -1346,7 +1433,7 @@ try {
         $taskCreated = Register-ForcedRebootScheduledTask
 
         if ($taskCreated) {
-            $rebootMessage = "Reboot required. Scheduled forced reboot at next 1:00 AM."
+            $rebootMessage = "Reboot required. Scheduled forced reboot at next 1:00 AM with wake enabled."
         }
         else {
             $rebootMessage = "Reboot required, but failed to create scheduled reboot task."

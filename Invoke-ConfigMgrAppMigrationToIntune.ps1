@@ -6,13 +6,6 @@ ITI - ConfigMgr Application Migration to Intune
 This script analyzes Microsoft Configuration Manager (ConfigMgr) applications, exports their metadata,
 creates Intune Win32 app packages, and uploads selected applications to Microsoft Intune.
 
-This customized version includes:
-- an ITI branded interactive console experience
-- a menu-driven workflow
-- cleaner progress and status messages
-- structured logging output
-- simplified action names
-
 Author / Customization
 - Florian Daminato
 - Modern Workspace Specialist
@@ -37,82 +30,6 @@ Core capabilities
    - Uploads encrypted package content
    - Commits content and applies icons where available
 
-Interactive behavior
-When no action switch is supplied, the script displays a menu:
-1. Document applications from ConfigMgr
-2. Create IntuneWin packages
-3. Upload applications to Intune
-
-The script then prompts only for the parameters required for the selected action.
-
-Export structure
-The script creates and uses the following folders under the selected ExportFolder:
-- Tools
-- AppDetails
-- Icons
-- Scripts
-- Win32Apps
-
-Important disclaimer
-This script is provided as-is without warranty of any kind.
-It should always be tested in a lab or controlled environment before production use.
-Validate:
-- exported metadata
-- packaging results
-- detection rules
-- install / uninstall commands
-- Intune app configuration
-- upload results
-
-Even when the script marks an application as importable, manual validation is still strongly recommended.
-
-.NOTES
-Customized for ITI operational use.
-Prepared by Florian Daminato, Modern Workspace Specialist.
-
-.PARAMETER GetConfigMgrAppInfo
-Get information about ConfigMgr applications. All selected apps will be exported to a folder without content.
-
-.PARAMETER CreateIntuneWinFiles
-Create Intune win32 app packages exported to the export folder.
-
-.PARAMETER UploadAppsToIntune
-Upload selected applications to Intune.
-
-.PARAMETER CreateIntuneWinFilesAndUploadToIntune
-Run packaging and upload in one execution.
-
-.PARAMETER RunAllActions
-Run all available actions.
-
-.PARAMETER SiteCode
-The ConfigMgr site code. Required for documentation/export actions.
-
-.PARAMETER ProviderMachineName
-The ConfigMgr SMS Provider machine name. Required for documentation/export actions.
-
-.PARAMETER ExportFolder
-The folder where exported content, logs, scripts, and packages are stored.
-
-.EXAMPLE
-.\Invoke-ConfigMgrAppMigrationToIntune.ps1
-
-Launch the script in interactive menu mode.
-
-.EXAMPLE
-.\Invoke-ConfigMgrAppMigrationToIntune.ps1 -GetConfigMgrAppInfo -SiteCode 'P01' -ProviderMachineName 'CM01' -ExportFolder 'C:\ExportToIntune'
-
-Document ConfigMgr applications and export their metadata.
-
-.EXAMPLE
-.\Invoke-ConfigMgrAppMigrationToIntune.ps1 -CreateIntuneWinFiles -ExportFolder 'C:\ExportToIntune'
-
-Create IntuneWin packages from previously exported application metadata.
-
-.EXAMPLE
-.\Invoke-ConfigMgrAppMigrationToIntune.ps1 -UploadAppsToIntune -ExportFolder 'C:\ExportToIntune'
-
-Upload selected packaged applications to Intune.
 #>
 [CmdletBinding(DefaultParameterSetName='Default')]
 param

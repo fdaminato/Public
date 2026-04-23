@@ -6,10 +6,12 @@ ITI - ConfigMgr Application Migration to Intune
 This script analyzes Microsoft Configuration Manager (ConfigMgr) applications, exports their metadata,
 creates Intune Win32 app packages, and uploads selected applications to Microsoft Intune.
 
-This customized version also includes an improved interactive console experience with:
+This customized version includes:
+- an ITI branded interactive console experience
 - a menu-driven workflow
 - cleaner progress and status messages
 - structured logging output
+- simplified action names
 
 Author / Customization
 - Florian Daminato
@@ -41,7 +43,7 @@ When no action switch is supplied, the script displays a menu:
 2. Create IntuneWin packages
 3. Upload applications to Intune
 
-The script will then prompt only for the parameters required for the chosen action.
+The script then prompts only for the parameters required for the selected action.
 
 Export structure
 The script creates and uses the following folders under the selected ExportFolder:
@@ -62,12 +64,7 @@ Validate:
 - Intune app configuration
 - upload results
 
-Even when the script marks an application as importable, a manual validation is still strongly recommended.
-
-Original script background
-This script logic is based on community and Microsoft sample work for ConfigMgr analysis,
-Win32 app packaging, and Intune upload workflows. This version includes presentation and usability
-customizations for internal ITI operational use.
+Even when the script marks an application as importable, manual validation is still strongly recommended.
 
 .NOTES
 Customized for ITI operational use.
@@ -140,7 +137,7 @@ param
     [string]$Sitecode,
 
     [Parameter(Mandatory=$false, ParameterSetName='GetConfigMgrAppInfo')]
-    [Parameter(Mandatory=$true, ParameterSetName='RunAllActions')]
+    [Parameter(Mandatory=$false, ParameterSetName='RunAllActions')]
     [string]$Providermachinename,
 
     [Parameter(Mandatory = $false)]
@@ -192,7 +189,7 @@ param
 $scriptVersion = '20250915'
 $script:LogOutputMode = $OutputMode
 #$script:LogFilePath = '{0}\{1}.log' -f $PSScriptRoot ,($MyInvocation.MyCommand -replace '.ps1') # Next to the script
-$script:LogFilePath = '{0}\{1}.log' -f $ExportFolder ,($MyInvocation.MyCommand -replace '.ps1') # Next to the exported data. Might make more sense.
+$script:LogFilePath = '{0}\{1}.log' -f $PSScriptRoot ,($MyInvocation.MyCommand -replace '.ps1') # Default until ExportFolder is collected interactively.
 
 # Array of displayed properties for the ConfigMgr applications shown in a GridView
 $arrayOfDisplayedProperties = @(
@@ -224,7 +221,44 @@ if(-not ([System.Security.Principal.WindowsPrincipal][System.Security.Principal.
 }
 #endregion
 
+
+
 #region branding and menu helpers
+function Write-ConsoleBanner
+{
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Title
+    )
+
+    $line = ('=' * [Math]::Max(60, $Title.Length + 8))
+    Write-Host ''
+    Write-Host $line -ForegroundColor White
+    Write-Host ("==  {0}" -f $Title) -ForegroundColor White
+    Write-Host $line -ForegroundColor White
+}
+
+function Write-ConsoleSection
+{
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Title
+    )
+
+    Write-Host ''
+    Write-Host ("--- {0} ---" -f $Title) -ForegroundColor DarkCyan
+}
+
+function Write-ConsoleDetail
+{
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message
+    )
+
+    Write-Host ("    > {0}" -f $Message) -ForegroundColor DarkGray
+}
+
 function Write-BrandHeader
 {
     Write-Host ''
@@ -242,6 +276,20 @@ function Write-BrandHeader
     Write-Host ''
 }
 
+function Read-ColoredPrompt
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$PromptText,
+
+        [System.ConsoleColor]$PromptColor = [System.ConsoleColor]::Green
+    )
+
+    Write-Host $PromptText -ForegroundColor $PromptColor -NoNewline
+    return Read-Host
+}
+
 function Show-MainMenu
 {
     [CmdletBinding()]
@@ -257,7 +305,7 @@ function Show-MainMenu
 
     do
     {
-        $choice = Read-Host "Enter your choice"
+        $choice = Read-ColoredPrompt -PromptText 'Enter your choice: ' -PromptColor Green
         if ($choice) { $choice = $choice.Trim() }
 
         switch -Regex ($choice)
@@ -268,7 +316,7 @@ function Show-MainMenu
             '^(Q|q)$'  { return 'Quit' }
             default
             {
-                Write-Host "Invalid selection. Please choose 1, 2, 3 or Q." -ForegroundColor Yellow
+                Write-Host 'Invalid selection. Please choose 1, 2, 3 or Q.' -ForegroundColor Yellow
             }
         }
     }
@@ -289,11 +337,11 @@ function Read-RequiredValue
     {
         if ([string]::IsNullOrWhiteSpace($DefaultValue))
         {
-            $value = Read-Host $Prompt
+            $value = Read-ColoredPrompt -PromptText ("{0}: " -f $Prompt) -PromptColor Green
         }
         else
         {
-            $value = Read-Host "$Prompt [$DefaultValue]"
+            $value = Read-ColoredPrompt -PromptText ("{0} [{1}]: " -f $Prompt, $DefaultValue) -PromptColor Green
             if ([string]::IsNullOrWhiteSpace($value))
             {
                 $value = $DefaultValue
@@ -305,7 +353,7 @@ function Read-RequiredValue
             return $value.Trim()
         }
 
-        Write-Host "This value is required." -ForegroundColor Yellow
+        Write-Host 'This value is required.' -ForegroundColor Yellow
     }
     while ($true)
 }
@@ -337,30 +385,34 @@ function Initialize-InteractiveParameters
     {
         $script:EntraIDTenantID = Read-RequiredValue -Prompt 'Entra ID Tenant ID'
     }
+
+    $script:LogFilePath = '{0}\{1}.log' -f $ExportFolder ,($MyInvocation.MyCommand -replace '.ps1')
 }
 #endregion
 
-
 #region before doing anything lets check if a run modes was picked
+Write-BrandHeader
+
 if (-NOT ($GetConfigMgrAppInfo -or $CreateIntuneWinFiles -or $UploadAppsToIntune -or $CreateIntuneWinFilesAndUploadToIntune -or $RunAllActions))
 {
     $selectedAction = Show-MainMenu
 
     switch ($selectedAction)
     {
-        'GetConfigMgrAppInfo'    { $GetConfigMgrAppInfo = $true; Write-ConsoleDetail -Message 'Selected mode: Document applications from ConfigMgr' }
-        'CreateIntuneWinFiles'   { $CreateIntuneWinFiles = $true; Write-ConsoleDetail -Message 'Selected mode: Create IntuneWin packages' }
-        'UploadAppsToIntune'     { $UploadAppsToIntune = $true; Write-ConsoleDetail -Message 'Selected mode: Upload applications to Intune' }
+        'GetConfigMgrAppInfo'  { $GetConfigMgrAppInfo = $true; Write-ConsoleDetail -Message 'Selected mode: Document applications from ConfigMgr' }
+        'CreateIntuneWinFiles' { $CreateIntuneWinFiles = $true; Write-ConsoleDetail -Message 'Selected mode: Create IntuneWin packages' }
+        'UploadAppsToIntune'   { $UploadAppsToIntune = $true; Write-ConsoleDetail -Message 'Selected mode: Upload applications to Intune' }
         'Quit'
         {
-            Write-Host "Exiting script." -ForegroundColor Yellow
-            break
+            Write-Host 'Exiting script.' -ForegroundColor Yellow
+            return
         }
     }
 }
 
 Initialize-InteractiveParameters
 #endregion
+
 
 
 
@@ -376,24 +428,19 @@ function Write-CMTraceLog
     [CmdletBinding()]
     Param
     (
-        #Path to the log file
         [parameter(Mandatory=$false)]
         [String]$LogFile=$script:LogFilePath,
 
-        #The information to log
         [parameter(Mandatory=$true)]
         [String]$Message,
 
-        #The source of the error
         [parameter(Mandatory=$false)]
         [String]$Component=(Split-Path $PSCommandPath -Leaf),
 
-        #severity (1 - Information, 2- Warning, 3 - Error) for better reading purposes this variable as string
         [parameter(Mandatory=$false)]
         [ValidateSet("Information","Warning","Error")]
         [String]$Severity="Information",
 
-        # write to console only
         [Parameter(Mandatory=$false)]
         [ValidateSet("Console","Log","ConsoleAndLog")]
         [string]$OutputMode = $script:LogOutputMode
@@ -404,8 +451,7 @@ function Write-CMTraceLog
         $OutputMode = 'Log'
     }
 
-    # save severity in single for cmtrace severity
-    [single]$cmSeverity=1
+    [single]$cmSeverity = 1
     switch ($Severity)
     {
         "Information" { $cmSeverity=1; $color = [System.ConsoleColor]::Cyan;   $tag = 'INFO '; break }
@@ -444,13 +490,11 @@ function Write-CMTraceLog
 
     If (($OutputMode -ieq "Log") -or ($OutputMode -ieq "ConsoleAndLog"))
     {
-        #Obtain UTC offset
         $DateTime = New-Object -ComObject WbemScripting.SWbemDateTime
         $DateTime.SetVarDate($(Get-Date))
         $UtcValue = $DateTime.Value
         $UtcOffset = $UtcValue.Substring(21, $UtcValue.Length - 21)
 
-        #Create the line to be logged
         $LogLine =  "<![LOG[$Message]LOG]!>" +`
                     "<time=`"$(Get-Date -Format HH:mm:ss.mmmm)$($UtcOffset)`" " +`
                     "date=`"$(Get-Date -Format M-d-yyyy)`" " +`
@@ -460,7 +504,6 @@ function Write-CMTraceLog
                     "thread=`"$PID`" " +`
                     "file=`"`">"
 
-        #Write the line to the passed log file
         $LogLine | Out-File -Append -Encoding UTF8 -FilePath $LogFile
     }
 }
@@ -522,44 +565,6 @@ Param(
     }
 }
 #endregion
-
-#region console helpers
-function Write-ConsoleBanner
-{
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Title
-    )
-
-    $line = ('=' * [Math]::Max(60, $Title.Length + 8))
-    Write-Host ''
-    Write-Host $line -ForegroundColor White
-    Write-Host ("==  {0}" -f $Title) -ForegroundColor White
-    Write-Host $line -ForegroundColor White
-}
-
-function Write-ConsoleSection
-{
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Title
-    )
-
-    Write-Host ''
-    Write-Host ("--- {0} ---" -f $Title) -ForegroundColor DarkCyan
-}
-
-function Write-ConsoleDetail
-{
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$Message
-    )
-
-    Write-Host ("    > {0}" -f $Message) -ForegroundColor DarkGray
-}
-#endregion
-
 
 #region function Get-SanitizedString
 <#
@@ -1360,7 +1365,7 @@ if (($GetConfigMgrAppInfo -or $RunAllActions) -and [string]::IsNullOrWhiteSpace(
 
 #region folder creation if not done already
 # Validate path and create if not there yet
-Write-BrandHeader
+
 try 
 {
     if (-not (Test-Path $ExportFolder)) 
@@ -1460,6 +1465,7 @@ if ($GetConfigMgrAppInfo -or $RunAllActions)
             $fullApp = $appWithoutLazyProperties | Get-CimInstance -CimSession $cimSession
             
             [xml]$appXmlContent = $fullApp.SDMPackageXML
+            $IconPath = $null
             
             if (-not ($null -eq $appXmlContent.AppMgmtDigest.Resources.Icon.Id) ) 
             {
@@ -2068,6 +2074,13 @@ if ($GetConfigMgrAppInfo -or $RunAllActions)
             }
 
             # RepairFolder
+            if (-Not ([string]::IsNullOrEmpty($tmpApp.deploymentTypes[0].RepairFolder)))
+            {
+                $tmpApp.CheckRepairFolder = "FAILED: There is no Intune option for RepairFolder. The app can still be created but the setting is ignored."
+                $tmpApp.AllChecksPassed = 'No'
+            }
+
+            # SourceUpdateProductCode
             if (-Not ([string]::IsNullOrEmpty($tmpApp.deploymentTypes[0].SourceUpdateProductCode)))
             {
                 $tmpApp.CheckSourceUpdateProductCode = "FAILED: There is no Intune option for SourceUpdateProductCode. The app can still be created but the setting is ignored."
@@ -2080,7 +2093,7 @@ if ($GetConfigMgrAppInfo -or $RunAllActions)
             }
 
             # HasDependency
-            if($tmpApp.HasDependency -eq $true)
+            if($tmpApp.deploymentTypes[0].HasDependency -eq $true)
             {
                 $tmpApp.CheckHasDependency = "FAILED: App has dependencies. While Intune supports dependencies, the script does not support it yet. The app can still be created but the setting is ignored."
                 $tmpApp.AllChecksPassed = 'No'
@@ -3140,7 +3153,7 @@ if ($UploadAppsToIntune -or $CreateIntuneWinFilesAndUploadToIntune -or $RunAllAc
         # If the token is expired we need to renew it to be able to upload the whole content
         # The content needs to be uploaded in chunks
         $IntunePackageIntuneWinMetadataStream = $IntunePackageIntuneWinMetadata.Open()
-        Write-CMTraceLog -Message "Trying to upload file to Intune Azure Storage. File: $($IntunePackageFullName)"
+        Write-CMTraceLog -Message "Trying to upload file metadata stream to Intune Azure Storage."
         $ChunkSizeInBytes = 1024l * 1024l * 6l;
         $FileSize = $IntunePackageIntuneWinMetadata.Length
         $ChunkCount = [System.Math]::Ceiling($FileSize / $ChunkSizeInBytes)
@@ -3339,8 +3352,6 @@ if ($UploadAppsToIntune -or $CreateIntuneWinFilesAndUploadToIntune -or $RunAllAc
             continue
         }
         $configMgrApp.Uploaded = 'Yes'
-        # remove $IntunePackageFullName because we do not need it anymore
-        $IntunePackageFullName | Remove-Item -Force -ErrorAction SilentlyContinue
     }   
     Write-Progress -Id 0 -Completed -Activity "Uploading applications to Intune"    
 

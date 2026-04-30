@@ -30,7 +30,7 @@ Core capabilities
    - Uploads encrypted package content
    - Commits content and applies icons where available
 
-Step 2 need step 1, and step 3 need step 2.
+Step 2 need step 1 completed, and step 3 need step 2 completed
 
 #>
 [CmdletBinding(DefaultParameterSetName='Default')]

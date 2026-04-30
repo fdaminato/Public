@@ -40,6 +40,8 @@ param(
 
     [int]$ReportExportTimeoutSeconds = 300,
 
+    [int]$MaxFirmwareDetailQueries = 5000,
+
     [string]$GraphClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e",
 
     [string]$GraphTenantId = "organizations",
@@ -485,14 +487,30 @@ function Convert-SecureBootStatus {
     if ([string]::IsNullOrWhiteSpace($Status)) { return "Unknown" }
 
     switch -Regex ($Status.ToLowerInvariant()) {
-        "^(enabled|on|true|1)$" { return "Enabled" }
-        "^(disabled|off|false|0)$" { return "Disabled" }
+        "^(enabled|on|true|1|yes|y)$" { return "Enabled" }
+        "^(disabled|off|false|0|no|n)$" { return "Disabled" }
         "not\s*applicable|notapplicable" { return "Not applicable" }
         "not\s*supported|notsupported|unsupported" { return "Not supported" }
         "unknown" { return "Unknown" }
         default { return $Status }
     }
 }
+
+function Convert-SecureBootCertificateStatus {
+    param($CertificateStatus)
+
+    $Status = Normalize-Value $CertificateStatus
+    if ([string]::IsNullOrWhiteSpace($Status)) { return "Unknown" }
+
+    switch -Regex ($Status.ToLowerInvariant()) {
+        "^up\s*to\s*date$|^uptodate$|^compliant$" { return "Up to date" }
+        "^not\s*up\s*to\s*date$|^notuptodate$|^out\s*of\s*date$" { return "Not up to date" }
+        "not\s*applicable|notapplicable" { return "Not applicable" }
+        "unknown" { return "Unknown" }
+        default { return $Status }
+    }
+}
+
 
 function Get-SecureBootRecordFromReportRow {
     param(
@@ -504,6 +522,7 @@ function Get-SecureBootRecordFromReportRow {
 
     $SecureBootRaw = Get-ReportFieldValue -Object $ReportRow -PropertyNames @(
         "SecureBootStatus",
+    "SecureBootEnabled",
         "Secure Boot Status",
         "SecureBootEnabled",
         "Secure Boot Enabled",
@@ -521,21 +540,21 @@ function Get-SecureBootRecordFromReportRow {
         SecureBootRaw               = Normalize-Value $SecureBootRaw
         SecureBootReportSource      = $ReportName
         SecureBootLastUpdateDateTime = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("LastUpdateDateTime", "Last Update Date Time", "HealthCertIssuedDate")
-        SecureBootCertificateStatus = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("CertificateStatus", "Certificate status", "SecureBootCertificateStatus")
+        SecureBootCertificateStatus = Convert-SecureBootCertificateStatus (Get-ReportFieldValue -Object $ReportRow -PropertyNames @("CertificateStatus", "Certificate status", "SecureBootCertificateStatus", "Secure Boot certificate status", "SecureBootCertificateStatus"))
         SecureBootAttestationError  = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("AttestationError", "Attestation Error")
         SecureBootDeviceOS          = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("DeviceOS", "Device OS", "OSVersion", "OS version")
         SecureBootTPMVersion        = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("TpmVersion", "TPM Version")
         SecureBootCodeIntegrityStatus = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("CodeIntegrityStatus", "Code Integrity Status")
         SecureBootVSMStatus         = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("VSMStatus", "VSM Status")
 
-        FirmwareManufacturer        = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("FirmwareManufacturer", "Firmware Manufacturer")
-        FirmwareVersion             = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("FirmwareVersion", "Firmware Version")
-        FirmwareReleaseDate         = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("FirmwareReleaseDate", "Firmware Release Date")
-        DeviceSKU                   = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("DeviceSKU", "Device SKU")
-        SystemBoardManufacturer     = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("SystemBoardManufacturer", "System Board Manufacturer")
-        SystemBoardModel            = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("SystemBoardModel", "System Board Model")
-        SystemBoardVersion          = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("SystemBoardVersion", "System Board Version")
-        ModelFamily                 = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("ModelFamily", "Model Family")
+        FirmwareManufacturer        = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("FirmwareManufacturer", "Firmware Manufacturer", "Firmware manufacturer")
+        FirmwareVersion             = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("FirmwareVersion", "Firmware Version", "Firmware version", "BIOS version", "BiosVersion")
+        FirmwareReleaseDate         = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("FirmwareReleaseDate", "Firmware Release Date", "Firmware release date", "BIOS release date", "BiosReleaseDate")
+        DeviceSKU                   = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("DeviceSKU", "Device SKU", "Device sku")
+        SystemBoardManufacturer     = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("SystemBoardManufacturer", "System Board Manufacturer", "System board manufacturer")
+        SystemBoardModel            = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("SystemBoardModel", "System Board Model", "System board model", "DeviceModel", "Device Model", "Device model", "Model")
+        SystemBoardVersion          = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("SystemBoardVersion", "System Board Version", "System board version")
+        ModelFamily                 = Get-ReportFieldValue -Object $ReportRow -PropertyNames @("ModelFamily", "Model Family", "Model family")
     }
 }
 
@@ -821,6 +840,8 @@ function Invoke-PrimaryUserBatch {
             $PrimaryUserUPN = ""
             $PrimaryUserEmail = ""
             $PrimaryUserId = ""
+            $PrimaryUserAccountEnabled = ""
+            $PrimaryUserAccountStatus = "Unknown"
             $LookupStatus = "OK"
 
             if ([int]$BatchResponse.status -ge 200 -and [int]$BatchResponse.status -lt 300) {
@@ -832,6 +853,10 @@ function Invoke-PrimaryUserBatch {
                     $PrimaryUserUPN = Normalize-Value $User.userPrincipalName
                     $PrimaryUserEmail = Normalize-Value $User.mail
                     $PrimaryUserId = Normalize-Value $User.id
+                    $PrimaryUserAccountEnabled = Get-PropertyValue -Object $User -PropertyNames @("accountEnabled")
+                    $PrimaryUserAccountStatus = "Unknown"
+                    if ($PrimaryUserAccountEnabled -eq "True" -or $PrimaryUserAccountEnabled -eq "true") { $PrimaryUserAccountStatus = "Enabled" }
+                    elseif ($PrimaryUserAccountEnabled -eq "False" -or $PrimaryUserAccountEnabled -eq "false") { $PrimaryUserAccountStatus = "Disabled" }
 
                     if (-not [string]::IsNullOrWhiteSpace($PrimaryUserDisplayName) -and -not [string]::IsNullOrWhiteSpace($PrimaryUserUPN)) {
                         $PrimaryUser = "$PrimaryUserDisplayName <$PrimaryUserUPN>"
@@ -858,6 +883,8 @@ function Invoke-PrimaryUserBatch {
                 PrimaryUserUPN          = $PrimaryUserUPN
                 PrimaryUserEmail        = $PrimaryUserEmail
                 PrimaryUserId           = $PrimaryUserId
+                PrimaryUserAccountEnabled = $PrimaryUserAccountEnabled
+                PrimaryUserAccountStatus = $PrimaryUserAccountStatus
                 PrimaryUserLookupStatus = $LookupStatus
             }
 
@@ -903,7 +930,7 @@ function Get-PrimaryUsersByManagedDevice {
         $Requests += @{
             id     = $RequestId
             method = "GET"
-            url    = "/deviceManagement/managedDevices/$DeviceId/users?`$select=id,displayName,userPrincipalName,mail"
+            url    = "/deviceManagement/managedDevices/$DeviceId/users?`$select=id,displayName,userPrincipalName,mail,accountEnabled"
         }
 
         $RequestMap[$RequestId] = [pscustomobject]@{ DeviceId = $DeviceId; DeviceName = $DeviceName }
@@ -1231,7 +1258,43 @@ function Get-ManagedDeviceHardwareInformation {
     $HardwareDevices = @(Invoke-GraphGetAll -Uri $HardwareUri -AllowFailure)
 
     if ($HardwareDevices.Count -eq 0) {
-        Write-Warning "No hardwareInformation records returned from managedDevices. Firmware version may remain blank if it is not included in the Secure Boot report."
+        Write-Warning "No hardwareInformation records returned from managedDevices list query. Trying per-device hardwareInformation detail fallback."
+    }
+
+    # Some tenants only return complete hardwareInformation from the individual managedDevice endpoint.
+    # Merge per-device detail records when firmware version/release date is missing from the list response.
+    $DetailQueries = 0
+    $DetailFailures = 0
+    $DetailRecords = @()
+
+    if ($ManagedDevices.Count -gt 0 -and $MaxDetailQueries -gt 0) {
+        Write-Host "Retrieving per-device hardwareInformation details for up to $MaxDetailQueries devices..." -ForegroundColor Cyan
+
+        foreach ($Device in $ManagedDevices) {
+            if ($DetailQueries -ge $MaxDetailQueries) { break }
+
+            $DeviceId = Normalize-Value $Device.id
+            if ([string]::IsNullOrWhiteSpace($DeviceId)) { continue }
+
+            $DetailQueries++
+            if (($DetailQueries % 100) -eq 0) { Write-Host "Hardware detail queries completed: $DetailQueries" -ForegroundColor DarkGray }
+
+            try {
+                $DetailUri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices/$DeviceId?`$select=id,deviceName,azureADDeviceId,manufacturer,model,hardwareInformation"
+                $DetailDevice = Invoke-MgGraphRequest -Method GET -Uri $DetailUri -ErrorAction Stop
+                $DetailRecords += $DetailDevice
+            }
+            catch {
+                $DetailFailures++
+            }
+        }
+
+        Write-Host "Hardware detail queries completed: $DetailQueries" -ForegroundColor Green
+        Write-Host "Hardware detail query failures: $DetailFailures" -ForegroundColor Yellow
+
+        if ($DetailRecords.Count -gt 0) {
+            $HardwareDevices = @($HardwareDevices) + @($DetailRecords)
+        }
     }
 
     foreach ($HardwareDevice in $HardwareDevices) {
@@ -1303,7 +1366,7 @@ Write-Host "Windows managed devices found: $($ManagedDevices.Count)" -Foreground
 # Retrieve firmware / hardware information from managedDevices
 # ============================================================
 
-$HardwareResults = Get-ManagedDeviceHardwareInformation -RawExportPath $HardwareRawPath
+$HardwareResults = Get-ManagedDeviceHardwareInformation -RawExportPath $HardwareRawPath -ManagedDevices $ManagedDevices -MaxDetailQueries $MaxFirmwareDetailQueries
 $HardwareByDeviceId = $HardwareResults.ByDeviceId
 $HardwareByDeviceName = $HardwareResults.ByDeviceName
 $HardwareByAzureADDeviceId = $HardwareResults.ByAzureADDeviceId
@@ -1357,6 +1420,7 @@ $SecureBootReportSelect = @(
     "DeviceName",
     "DeviceOS",
     "DeviceSKU",
+    "CertificateStatus",
     "ELAMDriverLoadedStatus",
     "FirmwareManufacturer",
     "FirmwareReleaseDate",
@@ -1370,6 +1434,7 @@ $SecureBootReportSelect = @(
     "SafeModeStatus",
     "SecuredCorePCStatus",
     "SecureBootStatus",
+    "SecureBootEnabled",
     "SystemBoardManufacturer",
     "SystemBoardModel",
     "SystemBoardVersion",
@@ -1560,15 +1625,23 @@ $Rows = foreach ($Device in $ManagedDevices) {
         $PrimaryUserId = Normalize-Value $PrimaryUserRecord.PrimaryUserId
         $PrimaryUserLookupStatus = Normalize-Value $PrimaryUserRecord.PrimaryUserLookupStatus
 
+        # First source: accountEnabled directly returned from managedDevice/users relationship, when available.
+        $RelationAccountEnabled = Normalize-Value $PrimaryUserRecord.PrimaryUserAccountEnabled
+        $RelationAccountStatus = Normalize-Value $PrimaryUserRecord.PrimaryUserAccountStatus
+        if ($RelationAccountStatus -eq "Enabled" -or $RelationAccountStatus -eq "Disabled") {
+            $PrimaryUserAccountEnabled = $RelationAccountEnabled
+            $PrimaryUserAccountStatus = $RelationAccountStatus
+            $PrimaryUserAccountLookupStatus = "managedDevice users relationship"
+        }
+
         if ([string]::IsNullOrWhiteSpace($PrimaryUser)) { $PrimaryUser = "None" }
 
         if ($PrimaryUser -eq "None") {
             $PrimaryUserAccountStatus = "No primary user"
             $PrimaryUserAccountLookupStatus = "No primary user"
         }
-        else {
+        elseif ($PrimaryUserAccountStatus -ne "Enabled" -and $PrimaryUserAccountStatus -ne "Disabled") {
             $PrimaryUserAccountRecord = $null
-
             # UPN first. This avoids Unknown in tenants where the relationship user id does not resolve cleanly.
             if (-not [string]::IsNullOrWhiteSpace($PrimaryUserUPN) -and $PrimaryUserAccountByUPN.ContainsKey($PrimaryUserUPN.ToLowerInvariant())) {
                 $PrimaryUserAccountRecord = $PrimaryUserAccountByUPN[$PrimaryUserUPN.ToLowerInvariant()]
@@ -1661,10 +1734,18 @@ Write-Host "Devices with no primary user: $RowsWithNoPrimaryUser" -ForegroundCol
 $RowsWithSecureBootEnabled = @($Rows | Where-Object { $_.SecureBootStatus -eq "Enabled" }).Count
 $RowsWithSecureBootDisabled = @($Rows | Where-Object { $_.SecureBootStatus -eq "Disabled" }).Count
 $RowsWithSecureBootUnknown = @($Rows | Where-Object { $_.SecureBootStatus -ne "Enabled" -and $_.SecureBootStatus -ne "Disabled" }).Count
+$RowsWithSBCertUpToDate = @($Rows | Where-Object { $_.SecureBootCertificateStatus -eq "Up to date" }).Count
+$RowsWithSBCertNotUpToDate = @($Rows | Where-Object { $_.SecureBootCertificateStatus -eq "Not up to date" }).Count
+$RowsWithSBCertNotApplicable = @($Rows | Where-Object { $_.SecureBootCertificateStatus -eq "Not applicable" }).Count
+$RowsWithSBCertUnknown = @($Rows | Where-Object { $_.SecureBootCertificateStatus -ne "Up to date" -and $_.SecureBootCertificateStatus -ne "Not up to date" -and $_.SecureBootCertificateStatus -ne "Not applicable" }).Count
 
 Write-Host "Secure Boot enabled: $RowsWithSecureBootEnabled" -ForegroundColor Green
 Write-Host "Secure Boot disabled: $RowsWithSecureBootDisabled" -ForegroundColor Yellow
 Write-Host "Secure Boot unknown/other: $RowsWithSecureBootUnknown" -ForegroundColor Yellow
+Write-Host "Secure Boot cert up to date: $RowsWithSBCertUpToDate" -ForegroundColor Green
+Write-Host "Secure Boot cert not up to date: $RowsWithSBCertNotUpToDate" -ForegroundColor Yellow
+Write-Host "Secure Boot cert not applicable: $RowsWithSBCertNotApplicable" -ForegroundColor Yellow
+Write-Host "Secure Boot cert unknown/other: $RowsWithSBCertUnknown" -ForegroundColor Yellow
 
 # ============================================================
 # Export CSV and JSON
@@ -2028,6 +2109,18 @@ $Html = @"
         </div>
 
         <div class="card">
+            <div class="card-title">SB Cert Up To Date</div>
+            <div class="card-value good" id="cardSBCertUpToDate">0</div>
+            <div class="card-note" id="cardSBCertUpToDateNote">0% of filtered devices</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">SB Cert Not Up To Date</div>
+            <div class="card-value bad" id="cardSBCertNotUpToDate">0</div>
+            <div class="card-note" id="cardSBCertNotUpToDateNote">0% of filtered devices</div>
+        </div>
+
+        <div class="card">
             <div class="card-title">Below OS Target</div>
             <div class="card-value warn" id="cardBelowTarget">0</div>
             <div class="card-note">UBR below configured threshold</div>
@@ -2073,6 +2166,19 @@ $Html = @"
                         <div class="legend-row"><span class="dot green"></span><span>Enabled</span><strong id="legendSecureBootEnabled">0 / 0%</strong></div>
                         <div class="legend-row"><span class="dot red"></span><span>Disabled</span><strong id="legendSecureBootDisabled">0 / 0%</strong></div>
                         <div class="legend-row"><span class="dot gray"></span><span>Unknown / other</span><strong id="legendSecureBootUnknown">0 / 0%</strong></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card chart-card">
+                <div class="pie" id="pieSBCert"><div class="pie-center" id="pieSBCertCenter">0%</div></div>
+                <div>
+                    <div class="card-title">Secure Boot Certificate</div>
+                    <div class="legend">
+                        <div class="legend-row"><span class="dot green"></span><span>Up to date</span><strong id="legendSBCertUpToDate">0 / 0%</strong></div>
+                        <div class="legend-row"><span class="dot red"></span><span>Not up to date</span><strong id="legendSBCertNotUpToDate">0 / 0%</strong></div>
+                        <div class="legend-row"><span class="dot orange"></span><span>Not applicable</span><strong id="legendSBCertNotApplicable">0 / 0%</strong></div>
+                        <div class="legend-row"><span class="dot gray"></span><span>Unknown / other</span><strong id="legendSBCertUnknown">0 / 0%</strong></div>
                     </div>
                 </div>
             </div>
@@ -2128,6 +2234,16 @@ $Html = @"
                     <label><input type="checkbox" name="secureBootFilter" value="enabled" data-label="Enabled" onchange="onCheckboxFilterChanged()"> Enabled</label>
                     <label><input type="checkbox" name="secureBootFilter" value="disabled" data-label="Disabled" onchange="onCheckboxFilterChanged()"> Disabled</label>
                     <label><input type="checkbox" name="secureBootFilter" value="unknown" data-label="Unknown / other" onchange="onCheckboxFilterChanged()"> Unknown / other</label>
+                </div>
+            </details>
+
+            <details class="check-filter" id="secureBootCertFilterMenu">
+                <summary><span id="secureBootCertFilterSummary">All SB cert states</span></summary>
+                <div class="check-filter-panel">
+                    <label><input type="checkbox" name="secureBootCertFilter" value="up to date" data-label="Up to date" onchange="onCheckboxFilterChanged()"> Up to date</label>
+                    <label><input type="checkbox" name="secureBootCertFilter" value="not up to date" data-label="Not up to date" onchange="onCheckboxFilterChanged()"> Not up to date</label>
+                    <label><input type="checkbox" name="secureBootCertFilter" value="not applicable" data-label="Not applicable" onchange="onCheckboxFilterChanged()"> Not applicable</label>
+                    <label><input type="checkbox" name="secureBootCertFilter" value="unknown" data-label="Unknown / other" onchange="onCheckboxFilterChanged()"> Unknown / other</label>
                 </div>
             </details>
 
@@ -2279,6 +2395,12 @@ function pill(value, type) {
         else cls += " warn";
     }
 
+    if (type === "sbcert") {
+        if (clean.toLowerCase() === "up to date") cls += " good";
+        else if (clean.toLowerCase() === "not up to date") cls += " bad";
+        else cls += " warn";
+    }
+
     if (type === "ubr") {
         if (clean.toLowerCase() === "ok") cls += " good";
         else if (clean.toLowerCase() === "below target") cls += " bad";
@@ -2345,6 +2467,7 @@ function updateFilterSummaries() {
     updateFilterSummary("complianceFilterSummary", "complianceFilter", "All compliance states");
     updateFilterSummary("primaryStatusFilterSummary", "primaryStatusFilter", "All primary user states");
     updateFilterSummary("secureBootFilterSummary", "secureBootFilter", "All Secure Boot states");
+    updateFilterSummary("secureBootCertFilterSummary", "secureBootCertFilter", "All SB cert states");
     updateFilterSummary("osFilterSummary", "osFilter", "All OS branches");
 }
 
@@ -2418,6 +2541,7 @@ function clearAllFilters() {
     clearCheckboxGroup("complianceFilter");
     clearCheckboxGroup("primaryStatusFilter");
     clearCheckboxGroup("secureBootFilter");
+    clearCheckboxGroup("secureBootCertFilter");
     clearCheckboxGroup("osFilter");
     document.getElementById("lastSyncPreset").value = "";
     document.getElementById("lastSyncFrom").value = "";
@@ -2430,6 +2554,7 @@ function getFilteredDevices() {
     const compliance = getCheckedValues("complianceFilter");
     const primaryStatus = getCheckedValues("primaryStatusFilter");
     const secureBoot = getCheckedValues("secureBootFilter");
+    const secureBootCert = getCheckedValues("secureBootCertFilter");
     const os = getCheckedValues("osFilter");
 
     return devices.filter(function(d) {
@@ -2457,6 +2582,14 @@ function getFilteredDevices() {
             if (!matchesAny(secureBoot, function(value) {
                 if (value === "unknown") return sb !== "enabled" && sb !== "disabled";
                 return sb === value;
+            })) return false;
+        }
+
+        if (secureBootCert.length) {
+            const cert = String(d.SecureBootCertificateStatus || "unknown").toLowerCase();
+            if (!matchesAny(secureBootCert, function(value) {
+                if (value === "unknown") return cert !== "up to date" && cert !== "not up to date" && cert !== "not applicable";
+                return cert === value;
             })) return false;
         }
 
@@ -2493,6 +2626,11 @@ function updateQuickLook(rows) {
     const secureBootDisabled = rows.filter(function(d) { return String(d.SecureBootStatus || "").toLowerCase() === "disabled"; }).length;
     const secureBootUnknown = total - secureBootEnabled - secureBootDisabled;
 
+    const sbCertUpToDate = rows.filter(function(d) { return String(d.SecureBootCertificateStatus || "").toLowerCase() === "up to date"; }).length;
+    const sbCertNotUpToDate = rows.filter(function(d) { return String(d.SecureBootCertificateStatus || "").toLowerCase() === "not up to date"; }).length;
+    const sbCertNotApplicable = rows.filter(function(d) { return String(d.SecureBootCertificateStatus || "").toLowerCase() === "not applicable"; }).length;
+    const sbCertUnknown = total - sbCertUpToDate - sbCertNotUpToDate - sbCertNotApplicable;
+
     const build26100 = rows.filter(function(d) { return Number(d.OSBuild) === 26100; }).length;
     const build26200 = rows.filter(function(d) { return Number(d.OSBuild) === 26200; }).length;
     const older = rows.filter(function(d) { return Number(d.OSBuild) && Number(d.OSBuild) < 26100; }).length;
@@ -2514,6 +2652,10 @@ function updateQuickLook(rows) {
     setText("cardSecureBootEnabledNote", pct(secureBootEnabled, total) + "% of filtered devices");
     setText("cardSecureBootDisabled", secureBootDisabled);
     setText("cardSecureBootDisabledNote", pct(secureBootDisabled, total) + "% of filtered devices");
+    setText("cardSBCertUpToDate", sbCertUpToDate);
+    setText("cardSBCertUpToDateNote", pct(sbCertUpToDate, total) + "% of filtered devices");
+    setText("cardSBCertNotUpToDate", sbCertNotUpToDate);
+    setText("cardSBCertNotUpToDateNote", pct(sbCertNotUpToDate, total) + "% of filtered devices");
     setText("cardBelowTarget", belowTarget);
 
     setText("legendCompliant", compliant + " / " + pct(compliant, total) + "%");
@@ -2551,6 +2693,19 @@ function updateQuickLook(rows) {
         { color: "var(--gray)", degrees: deg(secureBootUnknown, total) }
     ]);
 
+    setText("legendSBCertUpToDate", sbCertUpToDate + " / " + pct(sbCertUpToDate, total) + "%");
+    setText("legendSBCertNotUpToDate", sbCertNotUpToDate + " / " + pct(sbCertNotUpToDate, total) + "%");
+    setText("legendSBCertNotApplicable", sbCertNotApplicable + " / " + pct(sbCertNotApplicable, total) + "%");
+    setText("legendSBCertUnknown", sbCertUnknown + " / " + pct(sbCertUnknown, total) + "%");
+    setText("pieSBCertCenter", pct(sbCertUpToDate, total) + "%");
+
+    setPie("pieSBCert", [
+        { color: "var(--green)", degrees: deg(sbCertUpToDate, total) },
+        { color: "var(--red)", degrees: deg(sbCertNotUpToDate, total) },
+        { color: "var(--orange)", degrees: deg(sbCertNotApplicable, total) },
+        { color: "var(--gray)", degrees: deg(sbCertUnknown, total) }
+    ]);
+
     setText("legend26100", build26100 + " / " + pct(build26100, total) + "%");
     setText("legend26200", build26200 + " / " + pct(build26200, total) + "%");
     setText("legendOlder", older + " / " + pct(older, total) + "%");
@@ -2581,7 +2736,7 @@ function renderTable(rows) {
             "<td>" + escapeHtml(d.PrimaryUserUPN) + "</td>" +
             "<td>" + escapeHtml(d.EmailAddress) + "</td>" +
             "<td>" + pill(d.SecureBootStatus, "secureboot") + "</td>" +
-            "<td>" + escapeHtml(d.SecureBootCertificateStatus) + "</td>" +
+            "<td>" + pill(d.SecureBootCertificateStatus || "Unknown", "sbcert") + "</td>" +
             "<td>" + escapeHtml(d.SecureBootReportSource) + "</td>" +
             "<td>" + escapeHtml(d.FirmwareManufacturer) + "</td>" +
             "<td>" + escapeHtml(d.FirmwareVersion) + "</td>" +

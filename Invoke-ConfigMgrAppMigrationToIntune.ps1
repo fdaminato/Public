@@ -182,10 +182,10 @@ function Write-BrandHeader
 {
     Write-Host ''
     Write-Host '╔══════════════════════════════════════════════════════════════════════════════╗' -ForegroundColor White
-    Write-Host '║                  ITI | ConfigMgr App Migration to Intune                   ║' -ForegroundColor White
-    Write-Host '║                                                                            ║' -ForegroundColor White
-    Write-Host '║  Prepared by: Florian Daminato                                             ║' -ForegroundColor Cyan
-    Write-Host '║  Role: Modern Workspace Specialist                                         ║' -ForegroundColor Cyan
+    Write-Host '║                  ITI | ConfigMgr App Migration to Intune                     ║' -ForegroundColor White
+    Write-Host '║                                                                              ║' -ForegroundColor White
+    Write-Host '║  Prepared by: Florian Daminato                                               ║' -ForegroundColor Cyan
+    Write-Host '║  Role: Modern Workspace Specialist                                           ║' -ForegroundColor Cyan
     Write-Host '╚══════════════════════════════════════════════════════════════════════════════╝' -ForegroundColor White
     Write-Host ''
     Write-Host '  DISCLAIMER' -ForegroundColor Yellow

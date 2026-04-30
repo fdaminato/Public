@@ -195,9 +195,10 @@ function Invoke-GraphGetAll {
         [switch]$AllowFailure
     )
 
-    # Use a plain PowerShell array instead of System.Collections.Generic.List[object].
-    # Some Microsoft Graph SDK responses are returned as Dictionary/Hashtable objects on macOS/PowerShell 7,
-    # and returning a generic .NET list can throw: "Argument types do not match".
+    # IMPORTANT:
+    # Use a normal PowerShell array. System.Collections.Generic.List can fail with
+    # Invoke-MgGraphRequest objects returned as hashtable/dictionary objects, especially
+    # in PowerShell 7/macOS and sometimes on Windows too.
     $Results = @()
     $NextUri = $Uri
 
@@ -228,7 +229,6 @@ function Invoke-GraphGetAll {
 
     return $Results
 }
-
 function Invoke-GraphGetAllSafe {
     param(
         [Parameter(Mandatory)]

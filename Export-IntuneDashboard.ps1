@@ -4,6 +4,8 @@
 
 .DESCRIPTION
     Retrieves Windows managed devices from Microsoft Graph and builds a self-contained HTML dashboard.
+    Fixed null-safe property reading for Autopilot profile expansion and tenant remediation names.
+    Exports files into a customer/day/run folder structure.
 
     Included:
       - Tenant logo from Entra Company Branding
@@ -16,8 +18,6 @@
       - Last check-in filtering
       - Dynamic quick cards and charts
 
-Command : .\Export-IntuneDashboard.ps1 -MinimumUBR_26100 8037 -MinimumUBR_26200 8037 -MaxBitLockerRunStates 5000 -MaxDefenderDetailQueries 5000 -MaxInventoryRunStates 5000 -OpenReport
-
 .REQUIREMENTS
     PowerShell 7 recommended
     Microsoft.Graph.Authentication
@@ -29,11 +29,19 @@ Command : .\Export-IntuneDashboard.ps1 -MinimumUBR_26100 8037 -MinimumUBR_26200 
     Organization.Read.All
     OrganizationalBranding.Read.All
     User.Read.All
+
+.EXECUTION
+
+.\Export-IntuneDashboard.ps1 -MinimumUBR_26100 8037 -MinimumUBR_26200 8037 -MaxBitLockerRunStates 5000 -MaxDefenderDetailQueries 5000 -MaxInventoryRunStates 5000 -OpenReport
+
+
 #>
 
 [CmdletBinding()]
 param(
     [string]$OutputFolder,
+
+    [string]$CustomerName,
 
     [int]$MinimumUBR_26100 = 8037,
 
@@ -41,7 +49,7 @@ param(
 
     [int]$ReportExportTimeoutSeconds = 300,
 
-    [string]$BitLockerRemediationName = "Monitoring - Detection - Bitlocker - Get status",
+    [string]$BitLockerRemediationName = "DaaS - Detection - Bitlocker - Get status",
 
     [int]$MaxBitLockerRunStates = 3500,
 
@@ -89,30 +97,37 @@ if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
     $OutputFolder = Join-Path $ScriptRootSafe "IntuneDashboardOutput"
 }
 
-if (!(Test-Path $OutputFolder)) {
-    New-Item -Path $OutputFolder -ItemType Directory -Force | Out-Null
+# Root folder only. The final export folder is created after tenant branding is retrieved,
+# so the script can automatically create: <OutputFolder>\<Customer>\<yyyy-MM-dd>\Run-<yyyyMMdd-HHmmss>.
+$BaseOutputFolder = $OutputFolder
+
+if (!(Test-Path $BaseOutputFolder)) {
+    New-Item -Path $BaseOutputFolder -ItemType Directory -Force | Out-Null
 }
 
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$CsvPath  = Join-Path $OutputFolder "Intune-WindowsDevices-$Timestamp.csv"
-$JsonPath = Join-Path $OutputFolder "Intune-WindowsDevices-$Timestamp.json"
-$HtmlPath = Join-Path $OutputFolder "Intune-Dashboard-$Timestamp.html"
-$PrimaryUserRawPath = Join-Path $OutputFolder "Intune-PrimaryUsers-Raw-$Timestamp.json"
-$PrimaryUserAccountRawPath = Join-Path $OutputFolder "Intune-PrimaryUser-AccountStatus-Raw-$Timestamp.json"
-$SecureBootRawPath = Join-Path $OutputFolder "Intune-SecureBoot-Simple-Raw-$Timestamp.json"
-$BitLockerRawPath = Join-Path $OutputFolder "Intune-BitLocker-Remediation-Raw-$Timestamp.json"
-$DeviceEncryptionRawPath = Join-Path $OutputFolder "Intune-DeviceEncryption-Report-Raw-$Timestamp.json"
-$DefenderRawPath = Join-Path $OutputFolder "Intune-Defender-WindowsProtectionState-Raw-$Timestamp.json"
-$RebootPendingRawPath = Join-Path $OutputFolder "Intune-RebootPending-Remediation-Raw-$Timestamp.json"
-$FirmwareInventoryRawPath = Join-Path $OutputFolder "Intune-FirmwareInventory-Remediation-Raw-$Timestamp.json"
-$AutopilotRawPath = Join-Path $OutputFolder "Intune-AutopilotDevices-Raw-$Timestamp.json"
-$LenovoSecureBootBiosRawPath = Join-Path $OutputFolder "Lenovo-SecureBoot2023-BIOS-Requirements-Raw-$Timestamp.json"
+$RunDateFolder = Get-Date -Format "yyyy-MM-dd"
+
+# Temporary paths. These are reassigned to the final customer/day/run folder after tenant branding.
+$CsvPath  = Join-Path $BaseOutputFolder "Intune-WindowsDevices-$Timestamp.csv"
+$JsonPath = Join-Path $BaseOutputFolder "Intune-WindowsDevices-$Timestamp.json"
+$HtmlPath = Join-Path $BaseOutputFolder "Intune-Dashboard-$Timestamp.html"
+$PrimaryUserRawPath = Join-Path $BaseOutputFolder "Intune-PrimaryUsers-Raw-$Timestamp.json"
+$PrimaryUserAccountRawPath = Join-Path $BaseOutputFolder "Intune-PrimaryUser-AccountStatus-Raw-$Timestamp.json"
+$SecureBootRawPath = Join-Path $BaseOutputFolder "Intune-SecureBoot-Simple-Raw-$Timestamp.json"
+$BitLockerRawPath = Join-Path $BaseOutputFolder "Intune-BitLocker-Remediation-Raw-$Timestamp.json"
+$DeviceEncryptionRawPath = Join-Path $BaseOutputFolder "Intune-DeviceEncryption-Report-Raw-$Timestamp.json"
+$DefenderRawPath = Join-Path $BaseOutputFolder "Intune-Defender-WindowsProtectionState-Raw-$Timestamp.json"
+$RebootPendingRawPath = Join-Path $BaseOutputFolder "Intune-RebootPending-Remediation-Raw-$Timestamp.json"
+$FirmwareInventoryRawPath = Join-Path $BaseOutputFolder "Intune-FirmwareInventory-Remediation-Raw-$Timestamp.json"
+$AutopilotRawPath = Join-Path $BaseOutputFolder "Intune-AutopilotDevices-Raw-$Timestamp.json"
+$LenovoSecureBootBiosRawPath = Join-Path $BaseOutputFolder "Lenovo-SecureBoot2023-BIOS-Requirements-Raw-$Timestamp.json"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " Intune Windows Dashboard Export" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "Output folder: $OutputFolder"
+Write-Host "Output root:   $BaseOutputFolder"
 Write-Host ""
 
 $EmbeddedLenovoSecureBoot2023BiosCsv = @'
@@ -510,7 +525,6 @@ function ConvertTo-HtmlSafe {
 
 function Get-PropertyValue {
     param(
-        [Parameter(Mandatory)]
         $Object,
 
         [Parameter(Mandatory)]
@@ -539,7 +553,6 @@ function Get-PropertyValue {
 
 function Get-RawPropertyValue {
     param(
-        [Parameter(Mandatory)]
         $Object,
 
         [Parameter(Mandatory)]
@@ -2516,11 +2529,32 @@ function Get-GenericRemediationInventoryResults {
         $Output = Normalize-Value $OutputInfo.Output
 
         $RunStateId = Get-PropertyValue -Object $RunState -PropertyNames @("id")
-        $DeviceName = Get-PropertyValue -Object $RunState -PropertyNames @("deviceName", "managedDeviceName")
-        $ManagedDeviceId = Get-PropertyValue -Object $RunState -PropertyNames @("managedDeviceId", "deviceId", "managedDeviceID")
+
+        # Intune remediation run state properties are not 100% consistent across tenants/API versions.
+        # Use every known device name/id property and then fall back to parsing DeviceName/ComputerName from the detection output.
+        $DeviceName = Get-PropertyValue -Object $RunState -PropertyNames @(
+            "deviceName",
+            "managedDeviceName",
+            "deviceDisplayName",
+            "managedDeviceDeviceName"
+        )
+
+        $ManagedDeviceId = Get-PropertyValue -Object $RunState -PropertyNames @(
+            "managedDeviceId",
+            "managedDeviceID",
+            "managedDeviceIdString",
+            "deviceId",
+            "deviceID"
+        )
 
         if ([string]::IsNullOrWhiteSpace($ManagedDeviceId)) {
             $ManagedDeviceId = Get-ManagedDeviceIdFromRunStateId -RunStateId $RunStateId -ScriptId $RemediationId
+        }
+
+        if ([string]::IsNullOrWhiteSpace($DeviceName) -and -not [string]::IsNullOrWhiteSpace($Output)) {
+            if ($Output -match '(?i)(DeviceName|ComputerName|Hostname)\s*[=:]\s*([^|\r\n]+)') {
+                $DeviceName = Normalize-Value $Matches[2]
+            }
         }
 
         $Parsed = ConvertFrom-GenericInventoryOutput -Output $Output -InventoryType $InventoryType
@@ -2552,6 +2586,14 @@ function Get-GenericRemediationInventoryResults {
         }
     }
 
+    $WithOutput = @($RunStates | Where-Object {
+        -not [string]::IsNullOrWhiteSpace((Get-BestDetectionOutput -RunState $_).Output)
+    }).Count
+
+    Write-Host "$InventoryType run states with output: $WithOutput" -ForegroundColor Green
+    Write-Host "$InventoryType mapped by device id: $($ResultsByDeviceId.Count)" -ForegroundColor Green
+    Write-Host "$InventoryType mapped by device name: $($ResultsByDeviceName.Count)" -ForegroundColor Green
+
     return [pscustomobject]@{
         ByDeviceId   = $ResultsByDeviceId
         ByDeviceName = $ResultsByDeviceName
@@ -2571,8 +2613,16 @@ function Get-AutopilotDeviceInventory {
         Write-Host ""
         Write-Host "Retrieving Windows Autopilot device identities..." -ForegroundColor Cyan
 
-        $Uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$top=100"
+        # Use $expand=deploymentProfile so the dashboard can show the assigned Autopilot profile name.
+        # Some tenants/API versions do not allow this expansion, so fall back to the base identity query.
+        $Uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$expand=deploymentProfile&`$top=100"
         $Records = @(Invoke-GraphGetAll -Uri $Uri -AllowFailure)
+
+        if ($Records.Count -eq 0) {
+            Write-Host "Autopilot deploymentProfile expansion returned no rows. Retrying without expand..." -ForegroundColor Yellow
+            $Uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$top=100"
+            $Records = @(Invoke-GraphGetAll -Uri $Uri -AllowFailure)
+        }
 
         foreach ($Record in $Records) {
             $Serial = Normalize-Value (Get-PropertyValue -Object $Record -PropertyNames @("serialNumber"))
@@ -2983,6 +3033,52 @@ if ([string]::IsNullOrWhiteSpace($TenantLogoDataUri)) {
 else {
     $LogoHtml = "<img class='tenant-logo' src='$TenantLogoDataUri' alt='$SafeTenantName logo'>"
 }
+
+# ============================================================
+# Final customer/day/run output folder
+# ============================================================
+
+$EffectiveCustomerName = Normalize-Value $CustomerName
+if ([string]::IsNullOrWhiteSpace($EffectiveCustomerName)) {
+    $EffectiveCustomerName = Normalize-Value $TenantDisplayName
+}
+if ([string]::IsNullOrWhiteSpace($EffectiveCustomerName)) {
+    $EffectiveCustomerName = "UnknownCustomer"
+}
+
+$CustomerFolderName = ConvertTo-SafeFileName $EffectiveCustomerName
+$RunFolderName = "Run-$Timestamp"
+
+$CustomerOutputFolder = Join-Path $BaseOutputFolder $CustomerFolderName
+$DayOutputFolder = Join-Path $CustomerOutputFolder $RunDateFolder
+$OutputFolder = Join-Path $DayOutputFolder $RunFolderName
+
+foreach ($Folder in @($CustomerOutputFolder, $DayOutputFolder, $OutputFolder)) {
+    if (!(Test-Path $Folder)) {
+        New-Item -Path $Folder -ItemType Directory -Force | Out-Null
+    }
+}
+
+$CsvPath  = Join-Path $OutputFolder "Intune-WindowsDevices-$Timestamp.csv"
+$JsonPath = Join-Path $OutputFolder "Intune-WindowsDevices-$Timestamp.json"
+$HtmlPath = Join-Path $OutputFolder "Intune-Dashboard-$Timestamp.html"
+$PrimaryUserRawPath = Join-Path $OutputFolder "Intune-PrimaryUsers-Raw-$Timestamp.json"
+$PrimaryUserAccountRawPath = Join-Path $OutputFolder "Intune-PrimaryUser-AccountStatus-Raw-$Timestamp.json"
+$SecureBootRawPath = Join-Path $OutputFolder "Intune-SecureBoot-Simple-Raw-$Timestamp.json"
+$BitLockerRawPath = Join-Path $OutputFolder "Intune-BitLocker-Remediation-Raw-$Timestamp.json"
+$DeviceEncryptionRawPath = Join-Path $OutputFolder "Intune-DeviceEncryption-Report-Raw-$Timestamp.json"
+$DefenderRawPath = Join-Path $OutputFolder "Intune-Defender-WindowsProtectionState-Raw-$Timestamp.json"
+$RebootPendingRawPath = Join-Path $OutputFolder "Intune-RebootPending-Remediation-Raw-$Timestamp.json"
+$FirmwareInventoryRawPath = Join-Path $OutputFolder "Intune-FirmwareInventory-Remediation-Raw-$Timestamp.json"
+$AutopilotRawPath = Join-Path $OutputFolder "Intune-AutopilotDevices-Raw-$Timestamp.json"
+$LenovoSecureBootBiosRawPath = Join-Path $OutputFolder "Lenovo-SecureBoot2023-BIOS-Requirements-Raw-$Timestamp.json"
+
+Write-Host ""
+Write-Host "Export folder structure:" -ForegroundColor Cyan
+Write-Host "Customer: $EffectiveCustomerName"
+Write-Host "Day:      $RunDateFolder"
+Write-Host "Run:      $RunFolderName"
+Write-Host "Output:   $OutputFolder" -ForegroundColor Green
 
 # ============================================================
 # Retrieve Intune Windows managed devices
@@ -3500,9 +3596,37 @@ $Rows = foreach ($Device in $ManagedDevices) {
 
     if ($AutopilotRecord) {
         $AutopilotEnrolled = "Yes"
-        $AutopilotProfile = Get-PropertyValue -Object $AutopilotRecord -PropertyNames @("deploymentProfileDisplayName","profileName")
+
+        # Profile name can be returned either as a direct property or as the expanded deploymentProfile relationship.
+        $DeploymentProfileObject = Get-RawPropertyValue -Object $AutopilotRecord -PropertyNames @(
+            "deploymentProfile",
+            "intendedDeploymentProfile",
+            "assignedDeploymentProfile"
+        )
+
+        $AutopilotProfile = ""
+        if ($null -ne $DeploymentProfileObject) {
+            $AutopilotProfile = Get-PropertyValue -Object $DeploymentProfileObject -PropertyNames @(
+                "displayName",
+                "name"
+            )
+        }
+
+        if ([string]::IsNullOrWhiteSpace($AutopilotProfile)) {
+            $AutopilotProfile = Get-PropertyValue -Object $AutopilotRecord -PropertyNames @(
+                "deploymentProfileDisplayName",
+                "deploymentProfileName",
+                "profileName",
+                "intendedDeploymentProfileDisplayName",
+                "assignedDeploymentProfileDisplayName"
+            )
+        }
+
         $AutopilotGroupTag = Get-PropertyValue -Object $AutopilotRecord -PropertyNames @("groupTag")
-        $AutopilotDeploymentProfileAssignmentStatus = Get-PropertyValue -Object $AutopilotRecord -PropertyNames @("deploymentProfileAssignmentStatus")
+        $AutopilotDeploymentProfileAssignmentStatus = Get-PropertyValue -Object $AutopilotRecord -PropertyNames @(
+            "deploymentProfileAssignmentStatus",
+            "deploymentProfileAssignmentDetailedStatus"
+        )
         $AutopilotEnrollmentState = Get-PropertyValue -Object $AutopilotRecord -PropertyNames @("enrollmentState")
         $AutopilotLastContactedDateTime = Get-PropertyValue -Object $AutopilotRecord -PropertyNames @("lastContactedDateTime")
     }
@@ -4509,7 +4633,7 @@ $Html = @"
         </div>
 
         <div class="card">
-            <div class="card-title">✅ Lenovo SB Certificate 2023 Ready</div>
+            <div class="card-title">✅ Lenovo SB 2023 Ready</div>
             <div class="card-value good" id="cardLenovoSBReady">0</div>
             <div class="card-note">BIOS meets Lenovo minimum</div>
         </div>
@@ -4678,7 +4802,7 @@ $Html = @"
             </details>
 
             <details class="check-filter" id="lenovoSB2023FilterMenu">
-                <summary><span id="lenovoSB2023FilterSummary">All Lenovo SB Certificate 2023 states</span></summary>
+                <summary><span id="lenovoSB2023FilterSummary">All Lenovo SB 2023 states</span></summary>
                 <div class="check-filter-panel">
                     <label><input type="checkbox" name="lenovoSB2023Filter" value="ready" data-label="Ready" onchange="onCheckboxFilterChanged()"> Ready</label>
                     <label><input type="checkbox" name="lenovoSB2023Filter" value="update" data-label="Update BIOS" onchange="onCheckboxFilterChanged()"> Update BIOS</label>
@@ -4822,7 +4946,7 @@ $Html = @"
                         <th>🎯 Enrollment Quality</th>
                         <th>📋 Autopilot Profile</th>
                         <th>🧬 Firmware</th>
-                        <th>✅ Lenovo SB Certificate 2023</th>
+                        <th>✅ Lenovo SB 2023</th>
                         <th>📌 Lenovo Required BIOS</th>
                         <th>🧩 Lenovo Product</th>
                         <th>🧭 BIOS Mode</th>
@@ -4856,7 +4980,7 @@ $Html = @"
 </aside>
 
 <footer>
-    Primary user status comes from Entra ID accountEnabled. Secure Boot status comes from Intune device health attestation when available. BitLocker status comes from the remediation output named Monitoring - Detection - Bitlocker - Get status.
+    Primary user status comes from Entra ID accountEnabled. Secure Boot status comes from Intune device health attestation when available. BitLocker status comes from the remediation output named DaaS - Detection - Bitlocker - Get status.
 </footer>
 
 <script>
@@ -5751,7 +5875,7 @@ function openDeviceDrawer(deviceId) {
             ["Firmware manufacturer", d.FirmwareManufacturer],
             ["Firmware version", d.FirmwareVersion],
             ["Firmware release date", d.FirmwareReleaseDate],
-            ["Lenovo SB Certificate 2023 readiness", d.LenovoSB2023Readiness],
+            ["Lenovo SB 2023 readiness", d.LenovoSB2023Readiness],
             ["Lenovo product", d.LenovoSB2023Product],
             ["Lenovo model prefix", d.LenovoSB2023ModelPrefix],
             ["Lenovo required BIOS", d.LenovoSB2023RequiredBios],

@@ -8,15 +8,20 @@
     Exports files into a customer/day/run folder structure.
 
     Included:
-      - Tenant logo from Entra Company Branding
-      - Device compliance
-      - Windows OS version / UBR status
-      - Primary user from Intune managedDevice users relationship
-      - Primary user account status from Entra ID accountEnabled
-      - Storage
-      - User / model / serial
-      - Last check-in filtering
-      - Dynamic quick cards and charts
+        * Windows devices: device name, Intune ID, Entra device ID, serial number, manufacturer, model, OS, compliance, owner type, enrollment date, and last check-in.
+        * Storage: total disk space, free disk space, and free storage percentage.
+        * Primary user: assigned Intune primary user, display name, UPN, email, and user ID.
+        * User account status: whether the primary user account is enabled, disabled, missing, or unknown in Entra ID.
+        * OS / UBR status: Windows build, Windows version, UBR level, and whether it meets the configured target.
+        * Secure Boot: Secure Boot enabled, disabled, unknown, not supported, or not applicable.
+        * Microsoft Defender: Defender deployment status, protection state, real-time protection, signature status, engine version, and reboot requirement.
+        * BitLocker: encryption percentage, volume status, protection state, key protectors, encryption method, and last remediation run.
+        * Device encryption fallback: Intune encryption status when BitLocker remediation data is missing.
+        * Reboot pending: pending reboot status from Windows Update, CBS, file rename, computer rename, or ConfigMgr indicators.
+        * Firmware / BIOS: BIOS version, firmware version, release date, BIOS mode, device SKU, system board model, TPM version, and TPM readiness.
+        * Lenovo Secure Boot 2023 readiness: whether the BIOS version meets Lenovo’s Secure Boot 2023 certificate requirements.
+        * Autopilot: Autopilot enrollment status, deployment profile, group tag, assignment status, enrollment state, and last contacted date.
+        * Device health: stale check-in status, enrollment quality, duplicate device name, duplicate serial number, storage health, and overall risk score.
 
 .REQUIREMENTS
     PowerShell 7 recommended

@@ -20,8 +20,6 @@
         * Reboot pending: pending reboot status from Windows Update, CBS, file rename, computer rename, or ConfigMgr indicators.
         * Firmware / BIOS: BIOS version, firmware version, release date, BIOS mode, device SKU, system board model, TPM version, and TPM readiness.
         * Lenovo Secure Boot 2023 readiness: whether the BIOS version meets Lenovo’s Secure Boot 2023 certificate requirements.
-        * Dell Secure Boot 2023 readiness: whether the BIOS version meets Dell's minimum BIOS containing the 2023 certificates.
-        * HP Secure Boot 2023 readiness: whether SMBIOS Type 1 version contains the HP SBKPFV3 marker required for Microsoft certificate rollout.
         * Autopilot: Autopilot enrollment status, deployment profile, group tag, assignment status, enrollment state, and last contacted date.
         * Device health: stale check-in status, enrollment quality, duplicate device name, duplicate serial number, storage health, and overall risk score.
 
@@ -69,10 +67,6 @@ param(
     [int]$MaxInventoryRunStates = 5000,
 
     [string]$LenovoSecureBootBiosCsvPath,
-
-    [string]$DellSecureBootBiosCsvPath,
-
-    [string]$VIPDeviceGroupName = "OLN_MEM_Win_WUfB_VIP_Devices",
 
     [string]$GraphClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e",
 
@@ -125,7 +119,6 @@ $JsonPath = Join-Path $BaseOutputFolder "Intune-WindowsDevices-$Timestamp.json"
 $HtmlPath = Join-Path $BaseOutputFolder "Intune-Dashboard-$Timestamp.html"
 $PrimaryUserRawPath = Join-Path $BaseOutputFolder "Intune-PrimaryUsers-Raw-$Timestamp.json"
 $PrimaryUserAccountRawPath = Join-Path $BaseOutputFolder "Intune-PrimaryUser-AccountStatus-Raw-$Timestamp.json"
-$VIPDeviceGroupMembershipRawPath = Join-Path $BaseOutputFolder "Entra-VIPDeviceGroupMembership-Raw-$Timestamp.json"
 $SecureBootRawPath = Join-Path $BaseOutputFolder "Intune-SecureBoot-Simple-Raw-$Timestamp.json"
 $BitLockerRawPath = Join-Path $BaseOutputFolder "Intune-BitLocker-Remediation-Raw-$Timestamp.json"
 $DeviceEncryptionRawPath = Join-Path $BaseOutputFolder "Intune-DeviceEncryption-Report-Raw-$Timestamp.json"
@@ -134,7 +127,6 @@ $RebootPendingRawPath = Join-Path $BaseOutputFolder "Intune-RebootPending-Remedi
 $FirmwareInventoryRawPath = Join-Path $BaseOutputFolder "Intune-FirmwareInventory-Remediation-Raw-$Timestamp.json"
 $AutopilotRawPath = Join-Path $BaseOutputFolder "Intune-AutopilotDevices-Raw-$Timestamp.json"
 $LenovoSecureBootBiosRawPath = Join-Path $BaseOutputFolder "Lenovo-SecureBoot2023-BIOS-Requirements-Raw-$Timestamp.json"
-$DellSecureBootBiosRawPath = Join-Path $BaseOutputFolder "Dell-SecureBoot2023-BIOS-Requirements-Raw-$Timestamp.json"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
@@ -359,268 +351,6 @@ Z13 Gen 2,"21JV, 21JW",N41ET53W (v1.30)
 Z16 Gen 1,"21D4, 21D5",N3GET71W (v1.71)
 Z16 Gen 2,"21JX, 21JY",N41ET53W (v1.30)
 
-'@
-
-
-$EmbeddedDellSecureBoot2023BiosCsv = @'
-Product,Platform,MinimumBios
-Dell Pro,Dell Pro 13 Plus PB13250,2.6.1
-Dell Pro,Dell Pro 13 Plus PB13255,1.7.0
-Dell Pro,Dell Pro 13 Premium PA13250,2.6.1
-Dell Pro,Dell Pro 14 Essential PV14250,1.1.1
-Dell Pro,Dell Pro 14 Essential PV14255,1.5.0
-Dell Pro,Dell Pro 14 PC14250,1.7.0
-Dell Pro,Dell Pro 14 PC14255,1.7.0
-Dell Pro,Dell Pro 14 Plus PB14250,2.6.1
-Dell Pro,Dell Pro 14 Plus PB14255,1.7.0
-Dell Pro,Dell Pro 14 Premium PA14250,2.6.1
-Dell Pro,Dell Pro 15 Essential PV15250,1.0.0
-Dell Pro,Dell Pro 15 Essential PV15255,1.2.1
-Dell Pro,Dell Pro 16 PC16250,1.7.0
-Dell Pro,Dell Pro 16 PC16255,1.7.0
-Dell Pro,Dell Pro 16 Plus PB16250,2.6.1
-Dell Pro,Dell Pro 16 Plus PB16255,1.7.0
-Dell Pro,Dell Pro 24 All-in-One Plus QB24250,1.8.1
-Dell Pro,Dell Pro 24 All-in-One QC24250,1.8.1
-Dell Pro,Dell Pro 24 All-in-One QC24251,1.8.1
-Dell Pro,Dell Pro Laptop PC14250,1.7.0
-Dell Pro,Dell Pro Laptop PC16250,1.7.0
-Dell Pro,Dell Pro Max 14 MC14250,1.7.0
-Dell Pro,Dell Pro Max 14 MC14255,1.2.1
-Dell Pro,Dell Pro Max 14 Premium MA14250,1.4.2
-Dell Pro,Dell Pro Max 16 MC16250,1.7.0
-Dell Pro,Dell Pro Max 16 MC16255,1.2.1
-Dell Pro,Dell Pro Max 16 Plus MB16250,1.3.3
-Dell Pro,Dell Pro Max 16 Premium MA16250,1.4.2
-Dell Pro,Dell Pro Max 18 Plus MB18250,1.3.3
-Dell Pro,Dell Pro Max Micro FCM2250,1.7.1
-Dell Pro,Dell Pro Max Slim FCS1250,1.7.1
-Dell Pro,Dell Pro Max Tower T2 FCT2250,1.7.1
-Dell Pro,Dell Pro Max with GB10 FCM1253,1.1.0
-Dell Pro,Dell Pro Micro QCM1255,1.4.2
-Dell Pro,Dell Pro Micro QCM1250,1.7.0
-Dell Pro,Dell Pro Micro QCT1255,1.4.2
-Dell Pro,Dell Pro Micro Plus QBM1250,1.7.0
-Dell Pro,Dell Pro Rugged 10 Tablet,1.1.0
-Dell Pro,Dell Pro Rugged 12 Tablet,1.1.0
-Dell Pro,Dell Pro Rugged 13 RA13250,1.9.0
-Dell Pro,Dell Pro Rugged 14 RB14250,1.9.0
-Dell Pro,Dell Pro Slim QCS1255,1.4.2
-Dell Pro,Dell Pro Slim Essential QVS1260,1.8.1
-Dell Pro,Dell Pro Slim Plus QBS1250,1.7.0
-Dell Pro,Dell Pro Slim QCS1250,1.7.0
-Dell Pro,Dell Pro Tower Essential QVT1260,1.8.1
-Dell Pro,Dell Pro Tower QCT1255,1.4.2
-Dell Pro,Dell Pro Tower Plus QBT1250,1.7.0
-Dell Pro,Dell Pro Tower QCT1250,1.7.0
-Latitude,Latitude 12 Rugged Extreme 7214,1.52.0
-Latitude,Latitude 3120,1.37.0
-Latitude,Latitude 3140,1.25.5
-Latitude,Latitude 3140 2-in-1,1.25.5
-Latitude,Latitude 3190,1.42.0
-Latitude,Latitude 3190 2-in-1,1.42.0
-Latitude,Latitude 3301,1.37.0
-Latitude,Latitude 3310,1.31.0
-Latitude,Latitude 3310 2-In-1,1.30.0
-Latitude,Latitude 3320,1.40.0
-Latitude,Latitude 3330,1.32.1
-Latitude,Latitude 3340,1.25.1
-Latitude,Latitude 3400,1.39.0
-Latitude,Latitude 3410,1.36.0
-Latitude,Latitude 3420,1.44.0
-Latitude,Latitude 3430,1.30.1
-Latitude,Latitude 3440,1.25.1
-Latitude,Latitude 3450,1.16.1
-Latitude,Latitude 3500,1.39.0
-Latitude,Latitude 3510,1.36.0
-Latitude,Latitude 3520,1.44.0
-Latitude,Latitude 3530,1.30.1
-Latitude,Latitude 3540,1.25.1
-Latitude,Latitude 3550,1.16.1
-Latitude,Latitude 5300,1.37.0
-Latitude,Latitude 5300 2-in-1,1.37.0
-Latitude,Latitude 5310,1.30.0
-Latitude,Latitude 5310 2-in-1,1.30.0
-Latitude,Latitude 5320,1.46.0
-Latitude,Latitude 5330,1.32.1
-Latitude,Latitude 5340,1.24.1
-Latitude,Latitude 5350,1.16.1
-Latitude,Latitude 5400,1.41.1
-Latitude,Latitude 5401,1.42.1
-Latitude,Latitude 5410,1.38.1
-Latitude,Latitude 5411,1.39.1
-Latitude,Latitude 5420,1.49.0
-Latitude,Latitude 5420 Rugged,1.40.0
-Latitude,Latitude 5421,1.41.0
-Latitude,Latitude 5424 Rugged,1.40.0
-Latitude,Latitude 5430,1.32.1
-Latitude,Latitude 5430 Rugged Laptop,1.39.0
-Latitude,Latitude 5431,1.33.1
-Latitude,Latitude 5440,1.25.1
-Latitude,Latitude 5450,1.16.2
-Latitude,Latitude 5455,2.11.0
-Latitude,Latitude 5500,1.41.1
-Latitude,Latitude 5501,1.42.1
-Latitude,Latitude 5510,1.38.1
-Latitude,Latitude 5511,1.39.1
-Latitude,Latitude 5520,1.46.0
-Latitude,Latitude 5521,1.39.0
-Latitude,Latitude 5530,1.32.1
-Latitude,Latitude 5531,1.32.1
-Latitude,Latitude 5540,1.24.1
-Latitude,Latitude 5550,1.16.2
-Latitude,Latitude 7030 Rugged Extreme,1.17.3
-Latitude,Latitude 7200 2-In-1,1.38.0
-Latitude,Latitude 7210 2-in-1,1.40.0
-Latitude,Latitude 7212 Rugged Extreme Tablet,1.58.0
-Latitude,Latitude 7220 Rugged Extreme,1.48.0
-Latitude,Latitude 7230 Rugged Extreme,1.26.4
-Latitude,Latitude 7300,1.42.1
-Latitude,Latitude 7310,1.41.1
-Latitude,Latitude 7320,1.46.0
-Latitude,Latitude 7320 Detachable,1.43.0
-Latitude,Latitude 7330,1.34.1
-Latitude,Latitude 7330 Rugged Laptop,1.39.0
-Latitude,Latitude 7340,1.25.1
-Latitude,Latitude 7350,1.16.1
-Latitude,Latitude 7350 Detachable,1.14.1
-Latitude,Latitude 7400,1.42.1
-Latitude,Latitude 7400 2-In-1,1.37.0
-Latitude,Latitude 7410,1.41.1
-Latitude,Latitude 7420,1.46.0
-Latitude,Latitude 7424 Rugged Extreme,1.40.0
-Latitude,Latitude 7430,1.34.1
-Latitude,Latitude 7440,1.25.1
-Latitude,Latitude 7450,1.16.0
-Latitude,Latitude 7455,2.11.0
-Latitude,Latitude 7520,1.46.0
-Latitude,Latitude 7530,1.34.1
-Latitude,Latitude 7640,1.25.1
-Latitude,Latitude 7650,1.16.0
-Latitude,Latitude 9330,1.31.0
-Latitude,Latitude 9410,1.39.1
-Latitude,Latitude 9420,1.42.0
-Latitude,Latitude 9430,1.34.1
-Latitude,Latitude 9440 2-in-1,1.23.1
-Latitude,Latitude 9450,1.15.0
-Latitude,Latitude 9510 2-in-1,1.38.0
-Latitude,Latitude 9520,1.43.0
-Latitude,Latitude Rugged 7220EX,1.48.0
-OptiPlex,OptiPlex 3000 Micro,1.34.1
-OptiPlex,OptiPlex 3000 Small Form Factor,1.34.1
-OptiPlex,OptiPlex 3000 Tower,1.34.1
-OptiPlex,OptiPlex 3000 Thin Client,1.29.2
-OptiPlex,OptiPlex 3070,1.35.0
-OptiPlex,OptiPlex 3080,2.33.0
-OptiPlex,OptiPlex 3090,2.27.0
-OptiPlex,OptiPlex 3090 Ultra,1.38.0
-OptiPlex,OptiPlex 3280 All-in-One,1.41.0
-OptiPlex,OptiPlex 5000 Micro,1.33.0
-OptiPlex,OptiPlex 5000 Small Form Factor,1.33.0
-OptiPlex,OptiPlex 5000 Tower,1.33.0
-OptiPlex,OptiPlex 5070,1.35.0
-OptiPlex,OptiPlex 5080,1.33.0
-OptiPlex,OptiPlex 5090 Micro,1.37.0
-OptiPlex,OptiPlex 5090 Small Form Factor,1.37.0
-OptiPlex,OptiPlex 5090 Tower,1.37.0
-OptiPlex,OptiPlex 5270 All-in-One,1.40.0
-OptiPlex,OptiPlex 5400 All-In-One,1.1.53
-OptiPlex,OptiPlex 5480 All-in-One,1.42.0
-OptiPlex,OptiPlex 5490 All-In-One,1.43.0
-OptiPlex,OptiPlex 7000 Micro,1.33.2
-OptiPlex,OptiPlex 7000 Small Form Factor,1.33.2
-OptiPlex,OptiPlex 7000 Tower,1.33.2
-OptiPlex,OptiPlex 7000 XE Micro,1.33.2
-OptiPlex,OptiPlex 7070,1.35.0
-OptiPlex,OptiPlex 7070 Ultra,1.33.0
-OptiPlex,OptiPlex 7071,1.35.0
-OptiPlex,OptiPlex 7080,1.36.0
-OptiPlex,OptiPlex 7090 Tower,1.37.0
-OptiPlex,OptiPlex 7090 Ultra,1.38.0
-OptiPlex,OptiPlex 7400 All-In-One,1.1.53
-OptiPlex,OptiPlex 7470 All-in-One,1.40.0
-OptiPlex,OptiPlex 7480 All-in-One,1.42.0
-OptiPlex,OptiPlex 7490 All-In-One,1.43.0
-OptiPlex,OptiPlex 7770 All-in-One,1.40.0
-OptiPlex,OptiPlex 7780 All-in-One,1.42.0
-OptiPlex,OptiPlex AIO 7420,1.20.0
-OptiPlex,OptiPlex All-in-One 7410,1.30.0
-OptiPlex,OptiPlex Micro 7010,1.30.0
-OptiPlex,OptiPlex Micro Plus 7010,1.30.0
-OptiPlex,OptiPlex Micro 7020,1.20.0
-OptiPlex,OptiPlex SFF 7020,1.20.0
-OptiPlex,OptiPlex Small Form Factor 7010,1.30.0
-OptiPlex,OptiPlex Small Form Factor Plus 7010,1.30.0
-OptiPlex,OptiPlex Tower 7010,1.30.0
-OptiPlex,OptiPlex Tower Plus 7010,1.30.0
-OptiPlex,OptiPlex Tower 7020,1.20.0
-OptiPlex,OptiPlex XE3,1.38.0
-OptiPlex,OptiPlex XE4 SFF,1.33.2
-OptiPlex,OptiPlex XE4 Tower,1.33.2
-Precision,Precision 3240 Compact,1.38.0
-Precision,Precision 3260 XE Compact,3.18.3
-Precision,Precision 3260 Compact,3.18.3
-Precision,Precision 3280 CFF,1.16.2
-Precision,Precision 3430 Tower,1.37.0
-Precision,Precision 3431 Tower,1.36.0
-Precision,Precision 3440,1.36.0
-Precision,Precision 3450,1.37.0
-Precision,Precision 3460 XE Small Form Factor,3.18.3
-Precision,Precision 3460 Small Form Factor,3.18.3
-Precision,Precision 3470,1.33.1
-Precision,Precision 3480,1.25.1
-Precision,Precision 3490,1.16.2
-Precision,Precision 3540,1.41.1
-Precision,Precision 3541,1.42.1
-Precision,Precision 3550,1.38.1
-Precision,Precision 3551,1.39.1
-Precision,Precision 3560,1.46.0
-Precision,Precision 3561,1.39.0
-Precision,Precision 3570,1.32.1
-Precision,Precision 3571,1.32.1
-Precision,Precision 3580,1.24.1
-Precision,Precision 3581,1.24.1
-Precision,Precision 3590,1.16.2
-Precision,Precision 3591,1.16.2
-Precision,Precision 3630 Tower,2.37.0
-Precision,Precision 3640,1.41.0
-Precision,Precision 3650 Tower,1.44.0
-Precision,Precision 3660,2.30.1
-Precision,Precision 3680 Tower,1.18.2
-Precision,Precision 3930 Rack,2.40.0
-Precision,Precision 5470,1.34.0
-Precision,Precision 5480,1.22.1
-Precision,Precision 5490,1.14.2
-Precision,Precision 5540,1.39.0
-Precision,Precision 5550,1.39.0
-Precision,Precision 5560,1.41.0
-Precision,Precision 5570,1.35.0
-Precision,Precision 5680,1.23.1
-Precision,Precision 5690,1.15.1
-Precision,Precision 5750,1.37.0
-Precision,Precision 5760,1.37.0
-Precision,Precision 5770,1.35.0
-Precision,Precision 5820 Tower,2.46.0
-Precision,Precision 5860 Tower,3.1.1
-Precision,Precision 7540,1.43.1
-Precision,Precision 7550,1.41.1
-Precision,Precision 7560,1.42.0
-Precision,Precision 7670,1.32.0
-Precision,Precision 7680,1.23.6
-Precision,Precision 7740,1.43.1
-Precision,Precision 7750,1.41.1
-Precision,Precision 7760,1.42.0
-Precision,Precision 7770,1.32.0
-Precision,Precision 7780,1.23.6
-Precision,Precision 7820 Tower,2.50.0
-Precision,Precision 7865 Tower,1.21.1
-Precision,Precision 7875 Tower,2.2.1
-Precision,Precision 7920 Tower,2.50.0
-Precision,Precision 7920 Rack,2.25.1
-Precision,Precision 7920 XL Rack,2.25.1
-Precision,Precision 7960 Tower,2.13.1
-Precision,Precision 7960 Rack,2.8.3
-Precision,Precision 7960 XL Rack,2.8.3
 '@
 
 # ============================================================
@@ -2187,150 +1917,6 @@ function Get-PrimaryUserAccountStatuses {
 }
 
 
-
-function Get-EntraVIPDeviceGroupMembership {
-    param(
-        [Parameter(Mandatory)]
-        [array]$ManagedDevices,
-
-        [Parameter(Mandatory)]
-        [string]$GroupDisplayName,
-
-        [string]$RawExportPath
-    )
-
-    $ByAzureADDeviceId = @{}
-    $ByDeviceName = @{}
-    $Records = @()
-    $GroupFound = $false
-    $VIPCount = 0
-
-    $MemberDeviceIds = @{}
-    $MemberDeviceNames = @{}
-    $GroupId = ""
-    $ResolvedGroupName = Normalize-Value $GroupDisplayName
-
-    try {
-        Write-Host "Looking for Entra VIP device group: $GroupDisplayName" -ForegroundColor Cyan
-
-        $SafeGroupName = $GroupDisplayName.Replace("'", "''")
-        $Filter = "displayName eq '$SafeGroupName'"
-        $EncodedFilter = [System.Uri]::EscapeDataString($Filter)
-        $GroupUri = "https://graph.microsoft.com/v1.0/groups?`$filter=$EncodedFilter&`$select=id,displayName&`$top=10"
-        $GroupResponse = Invoke-MgGraphRequest -Method GET -Uri $GroupUri -ErrorAction Stop
-        $Groups = @(Get-RawPropertyValue -Object $GroupResponse -PropertyNames @("value"))
-
-        if ($Groups.Count -gt 0) {
-            $Group = $Groups[0]
-            $GroupId = Get-PropertyValue -Object $Group -PropertyNames @("id")
-            $ResolvedGroupName = Get-PropertyValue -Object $Group -PropertyNames @("displayName")
-            $GroupFound = $true
-
-            Write-Host "Found VIP device group: $ResolvedGroupName" -ForegroundColor Green
-            Write-Host "Retrieving transitive device members from VIP group..." -ForegroundColor Cyan
-
-            $MembersUri = "https://graph.microsoft.com/v1.0/groups/$GroupId/transitiveMembers/microsoft.graph.device?`$select=id,deviceId,displayName&`$top=999"
-            $Members = @(Invoke-GraphGetAll -Uri $MembersUri -AllowFailure)
-
-            if ($Members.Count -eq 0) {
-                Write-Host "No transitive members returned. Trying direct device members..." -ForegroundColor Yellow
-                $MembersUri = "https://graph.microsoft.com/v1.0/groups/$GroupId/members/microsoft.graph.device?`$select=id,deviceId,displayName&`$top=999"
-                $Members = @(Invoke-GraphGetAll -Uri $MembersUri -AllowFailure)
-            }
-
-            foreach ($Member in $Members) {
-                $MemberDeviceId = Normalize-Value (Get-PropertyValue -Object $Member -PropertyNames @("deviceId"))
-                $MemberDisplayName = Normalize-Value (Get-PropertyValue -Object $Member -PropertyNames @("displayName"))
-
-                if (-not [string]::IsNullOrWhiteSpace($MemberDeviceId)) {
-                    $MemberDeviceIds[$MemberDeviceId.ToLowerInvariant()] = $true
-                }
-
-                if (-not [string]::IsNullOrWhiteSpace($MemberDisplayName)) {
-                    $MemberDeviceNames[$MemberDisplayName.ToLowerInvariant()] = $true
-                }
-            }
-
-            Write-Host "VIP device group members retrieved: $($MemberDeviceIds.Count)" -ForegroundColor Green
-        }
-        else {
-            Write-Warning "VIP device group not found: $GroupDisplayName. All devices will be marked Standard."
-        }
-    }
-    catch {
-        Write-Warning "Could not retrieve VIP device group membership. All devices will be marked Standard."
-        Write-Warning $_.Exception.Message
-    }
-
-    foreach ($ManagedDevice in $ManagedDevices) {
-        $AzureADDeviceId = Normalize-Value $ManagedDevice.azureADDeviceId
-        $DeviceName = Normalize-Value $ManagedDevice.deviceName
-        $AzureADDeviceIdKey = $AzureADDeviceId.ToLowerInvariant()
-        $DeviceNameKey = $DeviceName.ToLowerInvariant()
-
-        $IsVIP = $false
-        $MatchMethod = "Not in VIP group"
-
-        if (-not [string]::IsNullOrWhiteSpace($AzureADDeviceIdKey) -and $MemberDeviceIds.ContainsKey($AzureADDeviceIdKey)) {
-            $IsVIP = $true
-            $MatchMethod = "VIP group member matched by Entra deviceId"
-        }
-        elseif (-not [string]::IsNullOrWhiteSpace($DeviceNameKey) -and $MemberDeviceNames.ContainsKey($DeviceNameKey)) {
-            $IsVIP = $true
-            $MatchMethod = "VIP group member matched by displayName"
-        }
-
-        $DevicePriority = if ($IsVIP) { "VIP" } else { "Standard" }
-        $DevicePriorityCategory = if ($IsVIP) { "vip" } else { "standard" }
-        if ($IsVIP) { $VIPCount++ }
-
-        $Record = [pscustomobject]@{
-            AzureADDeviceId          = $AzureADDeviceId
-            DeviceName               = $DeviceName
-            DevicePriority           = $DevicePriority
-            DevicePriorityCategory   = $DevicePriorityCategory
-            VIPGroupName             = $ResolvedGroupName
-            VIPGroupId               = $GroupId
-            VIPGroupFound            = $GroupFound
-            VIPMembershipMatchMethod = $MatchMethod
-            DevicePrioritySource     = "Entra group membership"
-        }
-
-        $Records += $Record
-
-        if (-not [string]::IsNullOrWhiteSpace($AzureADDeviceId)) {
-            $ByAzureADDeviceId[$AzureADDeviceId.ToLowerInvariant()] = $Record
-        }
-
-        if (-not [string]::IsNullOrWhiteSpace($DeviceName)) {
-            $ByDeviceName[$DeviceName.ToLowerInvariant()] = $Record
-        }
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($RawExportPath)) {
-        try {
-            $Records | Sort-Object DevicePriority, DeviceName | ConvertTo-Json -Depth 10 | Out-File -FilePath $RawExportPath -Encoding UTF8
-            Write-Host "VIP device group membership raw mapping exported: $RawExportPath" -ForegroundColor Green
-        }
-        catch {
-            Write-Warning "Could not export VIP device group membership raw mapping."
-            Write-Warning $_.Exception.Message
-        }
-    }
-
-    return [pscustomobject]@{
-        ByAzureADDeviceId = $ByAzureADDeviceId
-        ByDeviceName      = $ByDeviceName
-        Records           = $Records
-        Count             = $Records.Count
-        VIPCount          = $VIPCount
-        GroupFound        = $GroupFound
-        GroupName         = $ResolvedGroupName
-        GroupId           = $GroupId
-    }
-}
-
-
 function Convert-IntuneDeviceEncryptionStatus {
     param($Value)
 
@@ -2875,11 +2461,6 @@ function ConvertFrom-GenericInventoryOutput {
     }
 
     if ($InventoryType -eq "Firmware") {
-        $ComputerSystemProductVersion = Use-ValueOrUnknown $Parsed["ComputerSystemProductVersion"] ""
-        if ([string]::IsNullOrWhiteSpace($ComputerSystemProductVersion)) { $ComputerSystemProductVersion = Use-ValueOrUnknown $Parsed["SystemProductVersion"] "" }
-        if ([string]::IsNullOrWhiteSpace($ComputerSystemProductVersion)) { $ComputerSystemProductVersion = Use-ValueOrUnknown $Parsed["SMBIOSType1Version"] "" }
-        if ([string]::IsNullOrWhiteSpace($ComputerSystemProductVersion)) { $ComputerSystemProductVersion = Use-ValueOrUnknown $Parsed["SMBIOS Type 1 Version"] "" }
-
         return [pscustomobject]@{
             FirmwareManufacturer          = Use-ValueOrUnknown $Parsed["FirmwareManufacturer"] ""
             FirmwareVersion               = Use-ValueOrUnknown $Parsed["FirmwareVersion"] ""
@@ -2889,7 +2470,6 @@ function ConvertFrom-GenericInventoryOutput {
             BiosMode                      = Use-ValueOrUnknown $Parsed["BiosMode"] ""
             DeviceSKU                     = Use-ValueOrUnknown $Parsed["DeviceSKU"] ""
             SystemBoardModel              = Use-ValueOrUnknown $Parsed["SystemBoardModel"] ""
-            ComputerSystemProductVersion  = $ComputerSystemProductVersion
             TPMVersion                    = Use-ValueOrUnknown $Parsed["TPMVersion"] ""
             TpmSpecVersion                = Use-ValueOrUnknown $Parsed["TpmSpecVersion"] ""
             TpmReady                      = ConvertTo-YesNoUnknown $Parsed["TpmReady"]
@@ -3443,366 +3023,6 @@ function Get-LenovoSecureBoot2023Readiness {
 }
 
 
-function ConvertTo-DellComparableModelText {
-    param([string]$Value)
-
-    $Text = (Normalize-Value $Value).ToUpperInvariant()
-    if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
-
-    $Text = $Text -replace '[^A-Z0-9]+', ' '
-    $Text = $Text -replace '\bPLUS\b', 'PLUS'
-    $Text = $Text -replace '\bSFF\b', 'SMALL FORM FACTOR'
-    $Text = $Text -replace '\s+', ' '
-    return $Text.Trim()
-}
-
-function Get-DellSecureBoot2023BiosRequirements {
-    param(
-        [string]$CsvPath,
-        [string]$RawExportPath
-    )
-
-    $CandidatePaths = @()
-    if (-not [string]::IsNullOrWhiteSpace($CsvPath)) { $CandidatePaths += $CsvPath }
-    $CandidatePaths += (Join-Path $ScriptRootSafe "Dell-SecureBoot2023-BIOS-Requirements.csv")
-    $CandidatePaths += (Join-Path $ScriptRootSafe "dell.csv")
-    $CandidatePaths += (Join-Path (Get-Location).Path "Dell-SecureBoot2023-BIOS-Requirements.csv")
-    $CandidatePaths += (Join-Path (Get-Location).Path "dell.csv")
-    $CandidatePaths += (Join-Path $OutputFolder "dell.csv")
-
-    $CsvRows = @()
-    $UsedSource = "Embedded Dell CSV"
-
-    foreach ($Path in $CandidatePaths) {
-        if (-not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path $Path)) {
-            try {
-                $CsvRows = @(Import-Csv -Path $Path)
-                $UsedSource = $Path
-                break
-            }
-            catch {
-                Write-Warning "Could not import Dell BIOS CSV from $Path"
-                Write-Warning $_.Exception.Message
-            }
-        }
-    }
-
-    if ($CsvRows.Count -eq 0) {
-        $CsvRows = @($EmbeddedDellSecureBoot2023BiosCsv | ConvertFrom-Csv)
-    }
-
-    $Requirements = @()
-    $Seen = @{}
-
-    foreach ($Row in $CsvRows) {
-        $Product = Get-PropertyValue -Object $Row -PropertyNames @("Product", "Family", "Category")
-        $PlatformText = Get-PropertyValue -Object $Row -PropertyNames @("Platform", "Model", "System Model", "Computer Model")
-        $RequiredBios = Get-PropertyValue -Object $Row -PropertyNames @("MinimumBios", "Minimum BIOS Version with 2023 Certificate", "Minimum BIOS Version", "Minimum BIOS", "BIOS")
-
-        if ([string]::IsNullOrWhiteSpace($PlatformText) -or [string]::IsNullOrWhiteSpace($RequiredBios)) {
-            continue
-        }
-
-        $Platforms = @($PlatformText -split '\s+/\s+' | ForEach-Object { Normalize-Value $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        foreach ($Platform in $Platforms) {
-            $Comparable = ConvertTo-DellComparableModelText $Platform
-            if ([string]::IsNullOrWhiteSpace($Comparable)) { continue }
-
-            $Key = "$Comparable|$RequiredBios"
-            if ($Seen.ContainsKey($Key)) { continue }
-            $Seen[$Key] = $true
-
-            $Requirements += [pscustomobject]@{
-                Product         = $Product
-                Platform        = $Platform
-                ComparableModel = $Comparable
-                RequiredBios    = $RequiredBios
-                Source          = $UsedSource
-            }
-        }
-    }
-
-    try {
-        if (-not [string]::IsNullOrWhiteSpace($RawExportPath)) {
-            $Requirements |
-                Sort-Object Platform |
-                ConvertTo-Json -Depth 10 |
-                Out-File -FilePath $RawExportPath -Encoding UTF8
-
-            Write-Host "Dell Secure Boot 2023 BIOS requirement mapping exported: $RawExportPath" -ForegroundColor Green
-        }
-    }
-    catch {}
-
-    Write-Host "Dell Secure Boot 2023 BIOS requirement rows imported: $($Requirements.Count)" -ForegroundColor Green
-    Write-Host "Dell BIOS source: $UsedSource" -ForegroundColor Green
-    return $Requirements
-}
-
-function Get-DellBestRequirementMatch {
-    param(
-        [string[]]$IdentityValues,
-        [array]$Requirements
-    )
-
-    $IdentityText = ConvertTo-DellComparableModelText (($IdentityValues | ForEach-Object { Normalize-Value $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ' ')
-    if ([string]::IsNullOrWhiteSpace($IdentityText)) { return $null }
-
-    $Matches = @()
-
-    foreach ($Req in @($Requirements)) {
-        $Comparable = Normalize-Value $Req.ComparableModel
-        if ([string]::IsNullOrWhiteSpace($Comparable)) { continue }
-
-        # Prefer exact containment either way. This handles Intune model values such as "Latitude 5420"
-        # and Dell KB variants such as "OptiPlex 3000 Small Form Factor".
-        if ($IdentityText -eq $Comparable -or $IdentityText.Contains($Comparable) -or $Comparable.Contains($IdentityText)) {
-            $Matches += $Req
-        }
-    }
-
-    if ($Matches.Count -eq 0) { return $null }
-
-    return @($Matches | Sort-Object @{ Expression = { (Normalize-Value $_.ComparableModel).Length }; Descending = $true } | Select-Object -First 1)[0]
-}
-
-function Compare-DellBiosVersion {
-    param(
-        [string]$CurrentBios,
-        [string]$RequiredBios
-    )
-
-    $CurrentText = Normalize-Value $CurrentBios
-    $RequiredText = Normalize-Value $RequiredBios
-
-    $CurrentVersion = ConvertTo-VersionObjectSafe $CurrentText
-    $RequiredVersion = ConvertTo-VersionObjectSafe $RequiredText
-
-    if ($CurrentVersion -and $RequiredVersion) {
-        if ($CurrentVersion -ge $RequiredVersion) {
-            return [pscustomobject]@{ IsReady = $true; Method = "Version"; Detail = "$CurrentText >= $RequiredText" }
-        }
-
-        return [pscustomobject]@{ IsReady = $false; Method = "Version"; Detail = "$CurrentText < $RequiredText" }
-    }
-
-    return [pscustomobject]@{ IsReady = $null; Method = "Unknown"; Detail = "Could not compare BIOS version" }
-}
-
-function Get-DellSecureBoot2023Readiness {
-    param(
-        [string]$Manufacturer,
-        [string]$DeviceModel,
-        [string]$DeviceSKU,
-        [string]$SystemBoardModel,
-        [string]$FirmwareVersion,
-        [array]$Requirements,
-        [string[]]$AdditionalValues
-    )
-
-    $ManufacturerText = (Normalize-Value $Manufacturer).ToLowerInvariant()
-    $FirmwareManufacturerText = ""
-    if ($AdditionalValues) {
-        $FirmwareManufacturerText = (($AdditionalValues | ForEach-Object { Normalize-Value $_ }) -join " ").ToLowerInvariant()
-    }
-
-    if ($ManufacturerText -notmatch 'dell' -and $FirmwareManufacturerText -notmatch 'dell') {
-        return [pscustomobject]@{
-            Status        = "Not Dell"
-            Category      = "notDell"
-            Product       = ""
-            Platform      = ""
-            RequiredBios  = ""
-            CurrentBios   = Normalize-Value $FirmwareVersion
-            CompareMethod = "Manufacturer"
-            CompareDetail = "Device manufacturer is not Dell."
-        }
-    }
-
-    $IdentityValues = @()
-    $IdentityValues += $DeviceModel
-    $IdentityValues += $DeviceSKU
-    $IdentityValues += $SystemBoardModel
-    if ($AdditionalValues) { foreach ($Value in $AdditionalValues) { $IdentityValues += $Value } }
-
-    $Requirement = Get-DellBestRequirementMatch -IdentityValues $IdentityValues -Requirements $Requirements
-    $CurrentBiosText = Normalize-Value $FirmwareVersion
-
-    if ($null -eq $Requirement) {
-        $IdentityText = (($IdentityValues | ForEach-Object { Normalize-Value $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join " ")
-        return [pscustomobject]@{
-            Status        = "Not in Dell list"
-            Category      = "notListed"
-            Product       = ""
-            Platform      = ""
-            RequiredBios  = ""
-            CurrentBios   = $CurrentBiosText
-            CompareMethod = "No Dell requirement match"
-            CompareDetail = "Dell device detected, but no Dell Secure Boot 2023 BIOS requirement matched identity fields. Identity scanned: $IdentityText"
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($CurrentBiosText)) {
-        return [pscustomobject]@{
-            Status        = "Review - BIOS missing"
-            Category      = "review"
-            Product       = $Requirement.Product
-            Platform      = $Requirement.Platform
-            RequiredBios  = $Requirement.RequiredBios
-            CurrentBios   = ""
-            CompareMethod = "Dell model match"
-            CompareDetail = "Matched $($Requirement.Platform), but firmware inventory did not return BIOS version."
-        }
-    }
-
-    $Compare = Compare-DellBiosVersion -CurrentBios $CurrentBiosText -RequiredBios $Requirement.RequiredBios
-
-    if ($Compare.IsReady -eq $true) {
-        return [pscustomobject]@{
-            Status        = "Ready"
-            Category      = "ready"
-            Product       = $Requirement.Product
-            Platform      = $Requirement.Platform
-            RequiredBios  = $Requirement.RequiredBios
-            CurrentBios   = $CurrentBiosText
-            CompareMethod = $Compare.Method
-            CompareDetail = "Matched Dell platform $($Requirement.Platform). " + $Compare.Detail
-        }
-    }
-
-    if ($Compare.IsReady -eq $false) {
-        return [pscustomobject]@{
-            Status        = "Update BIOS"
-            Category      = "update"
-            Product       = $Requirement.Product
-            Platform      = $Requirement.Platform
-            RequiredBios  = $Requirement.RequiredBios
-            CurrentBios   = $CurrentBiosText
-            CompareMethod = $Compare.Method
-            CompareDetail = "Matched Dell platform $($Requirement.Platform). " + $Compare.Detail
-        }
-    }
-
-    return [pscustomobject]@{
-        Status        = "Review - cannot compare"
-        Category      = "review"
-        Product       = $Requirement.Product
-        Platform      = $Requirement.Platform
-        RequiredBios  = $Requirement.RequiredBios
-        CurrentBios   = $CurrentBiosText
-        CompareMethod = $Compare.Method
-        CompareDetail = "Matched Dell platform $($Requirement.Platform). " + $Compare.Detail
-    }
-}
-
-
-function Test-HPManufacturer {
-    param(
-        [string]$Manufacturer,
-        [string[]]$AdditionalValues
-    )
-
-    $Text = ((@($Manufacturer) + @($AdditionalValues)) | ForEach-Object { Normalize-Value $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ' '
-    $Text = $Text.ToLowerInvariant()
-
-    if ($Text -match '\bhp\b' -or $Text -match 'hewlett[\s\-]*packard') { return $true }
-    return $false
-}
-
-function Get-HPSecureBoot2023Readiness {
-    param(
-        [string]$Manufacturer,
-        [string]$DeviceModel,
-        [string]$DeviceSKU,
-        [string]$SystemBoardModel,
-        [string]$ComputerSystemProductVersion,
-        [string]$FirmwareVersion,
-        [string[]]$AdditionalValues
-    )
-
-    $CurrentBiosText = Normalize-Value $FirmwareVersion
-    $IsHP = Test-HPManufacturer -Manufacturer $Manufacturer -AdditionalValues $AdditionalValues
-
-    if (-not $IsHP) {
-        return [pscustomobject]@{
-            Status        = "Not HP"
-            Category      = "notHP"
-            Marker        = ""
-            Product       = ""
-            CurrentBios   = $CurrentBiosText
-            SmbiosVersion = Normalize-Value $ComputerSystemProductVersion
-            CompareMethod = "Manufacturer"
-            CompareDetail = "Device manufacturer is not HP."
-        }
-    }
-
-    $IdentityValues = @()
-    $IdentityValues += $DeviceModel
-    $IdentityValues += $DeviceSKU
-    $IdentityValues += $SystemBoardModel
-    $IdentityValues += $ComputerSystemProductVersion
-    $IdentityValues += $FirmwareVersion
-    if ($AdditionalValues) { foreach ($Value in $AdditionalValues) { $IdentityValues += $Value } }
-
-    $IdentityText = (($IdentityValues | ForEach-Object { Normalize-Value $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join " ")
-    $IdentityTextUpper = $IdentityText.ToUpperInvariant()
-    $SmbiosVersionText = Normalize-Value $ComputerSystemProductVersion
-
-    # HP readiness is not only a BIOS version comparison. HP documents that the BIOS update
-    # adds SBKPFV3 to the SMBIOS Type 1 Version field. Without that marker, Microsoft
-    # cumulative updates do not target the device for the new Secure Boot certificates.
-    if ($IdentityTextUpper -match 'SBKPFV3') {
-        return [pscustomobject]@{
-            Status        = "Ready"
-            Category      = "ready"
-            Marker        = "SBKPFV3"
-            Product       = Normalize-Value $DeviceModel
-            CurrentBios   = $CurrentBiosText
-            SmbiosVersion = $SmbiosVersionText
-            CompareMethod = "HP SMBIOS Type 1 marker"
-            CompareDetail = "HP device includes SBKPFV3 in SMBIOS Type 1 version / inventory fields."
-        }
-    }
-
-    if ($IdentityTextUpper -match 'SBKPFV2') {
-        return [pscustomobject]@{
-            Status        = "Review - SBKPFV2 only"
-            Category      = "review"
-            Marker        = "SBKPFV2"
-            Product       = Normalize-Value $DeviceModel
-            CurrentBios   = $CurrentBiosText
-            SmbiosVersion = $SmbiosVersionText
-            CompareMethod = "HP SMBIOS Type 1 marker"
-            CompareDetail = "HP device shows SBKPFV2 but not SBKPFV3. Verify HP model-specific BIOS guidance and whether Microsoft supports this platform without SBKPFV3."
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($SmbiosVersionText)) {
-        return [pscustomobject]@{
-            Status        = "Review - SMBIOS marker missing"
-            Category      = "review"
-            Marker        = ""
-            Product       = Normalize-Value $DeviceModel
-            CurrentBios   = $CurrentBiosText
-            SmbiosVersion = ""
-            CompareMethod = "HP SMBIOS Type 1 marker"
-            CompareDetail = "HP device detected, but firmware inventory did not return Win32_ComputerSystemProduct.Version / SMBIOS Type 1 version. Add ComputerSystemProductVersion to the firmware inventory remediation output."
-        }
-    }
-
-    return [pscustomobject]@{
-        Status        = "Update BIOS"
-        Category      = "update"
-        Marker        = "Missing SBKPFV3"
-        Product       = Normalize-Value $DeviceModel
-        CurrentBios   = $CurrentBiosText
-        SmbiosVersion = $SmbiosVersionText
-        CompareMethod = "HP SMBIOS Type 1 marker"
-        CompareDetail = "HP device detected, but SBKPFV3 was not found in SMBIOS Type 1 version / inventory fields. Update HP BIOS for Secure Boot 2023 certificate readiness."
-    }
-}
-
-
 # ============================================================
 # Tenant branding
 # ============================================================
@@ -3849,7 +3069,6 @@ $JsonPath = Join-Path $OutputFolder "Intune-WindowsDevices-$Timestamp.json"
 $HtmlPath = Join-Path $OutputFolder "Intune-Dashboard-$Timestamp.html"
 $PrimaryUserRawPath = Join-Path $OutputFolder "Intune-PrimaryUsers-Raw-$Timestamp.json"
 $PrimaryUserAccountRawPath = Join-Path $OutputFolder "Intune-PrimaryUser-AccountStatus-Raw-$Timestamp.json"
-$VIPDeviceGroupMembershipRawPath = Join-Path $OutputFolder "Entra-VIPDeviceGroupMembership-Raw-$Timestamp.json"
 $SecureBootRawPath = Join-Path $OutputFolder "Intune-SecureBoot-Simple-Raw-$Timestamp.json"
 $BitLockerRawPath = Join-Path $OutputFolder "Intune-BitLocker-Remediation-Raw-$Timestamp.json"
 $DeviceEncryptionRawPath = Join-Path $OutputFolder "Intune-DeviceEncryption-Report-Raw-$Timestamp.json"
@@ -3858,7 +3077,6 @@ $RebootPendingRawPath = Join-Path $OutputFolder "Intune-RebootPending-Remediatio
 $FirmwareInventoryRawPath = Join-Path $OutputFolder "Intune-FirmwareInventory-Remediation-Raw-$Timestamp.json"
 $AutopilotRawPath = Join-Path $OutputFolder "Intune-AutopilotDevices-Raw-$Timestamp.json"
 $LenovoSecureBootBiosRawPath = Join-Path $OutputFolder "Lenovo-SecureBoot2023-BIOS-Requirements-Raw-$Timestamp.json"
-$DellSecureBootBiosRawPath = Join-Path $OutputFolder "Dell-SecureBoot2023-BIOS-Requirements-Raw-$Timestamp.json"
 
 Write-Host ""
 Write-Host "Export folder structure:" -ForegroundColor Cyan
@@ -3900,24 +3118,6 @@ $ManagedDeviceSelect = @(
 $ManagedDevicesUri = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?`$filter=operatingSystem%20eq%20'Windows'&`$select=$ManagedDeviceSelect&`$top=100"
 $ManagedDevices = Invoke-GraphGetAll -Uri $ManagedDevicesUri
 Write-Host "Windows managed devices found: $($ManagedDevices.Count)" -ForegroundColor Green
-
-# ============================================================
-# Retrieve VIP device group membership
-# ============================================================
-
-Write-Host ""
-Write-Host "Retrieving VIP device membership from Entra group: $VIPDeviceGroupName" -ForegroundColor Cyan
-
-$VIPDeviceGroupResults = Get-EntraVIPDeviceGroupMembership `
-    -ManagedDevices $ManagedDevices `
-    -GroupDisplayName $VIPDeviceGroupName `
-    -RawExportPath $VIPDeviceGroupMembershipRawPath
-
-$VIPDeviceGroupByAzureADDeviceId = $VIPDeviceGroupResults.ByAzureADDeviceId
-$VIPDeviceGroupByDeviceName = $VIPDeviceGroupResults.ByDeviceName
-
-Write-Host "VIP device group membership rows processed: $($VIPDeviceGroupResults.Count)" -ForegroundColor Green
-Write-Host "VIP devices matched: $($VIPDeviceGroupResults.VIPCount)" -ForegroundColor Green
 
 # ============================================================
 # Retrieve primary users and account status
@@ -4127,12 +3327,6 @@ $LenovoSecureBoot2023BiosRequirements = Get-LenovoSecureBoot2023BiosRequirements
     -CsvPath $LenovoSecureBootBiosCsvPath `
     -RawExportPath $LenovoSecureBootBiosRawPath
 
-Write-Host ""
-Write-Host "Loading Dell Secure Boot 2023 BIOS requirement table..." -ForegroundColor Cyan
-$DellSecureBoot2023BiosRequirements = Get-DellSecureBoot2023BiosRequirements `
-    -CsvPath $DellSecureBootBiosCsvPath `
-    -RawExportPath $DellSecureBootBiosRawPath
-
 # ============================================================
 # Retrieve Autopilot inventory
 # ============================================================
@@ -4244,24 +3438,9 @@ $Rows = foreach ($Device in $ManagedDevices) {
         $AutopilotRecord = $AutopilotByDeviceName[$DeviceKey]
     }
 
-    $VIPDeviceGroupRecord = $null
-
-    if (-not [string]::IsNullOrWhiteSpace($AzureADDeviceIdKey) -and $VIPDeviceGroupByAzureADDeviceId.ContainsKey($AzureADDeviceIdKey)) {
-        $VIPDeviceGroupRecord = $VIPDeviceGroupByAzureADDeviceId[$AzureADDeviceIdKey]
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace($DeviceKey) -and $VIPDeviceGroupByDeviceName.ContainsKey($DeviceKey)) {
-        $VIPDeviceGroupRecord = $VIPDeviceGroupByDeviceName[$DeviceKey]
-    }
-
     $TotalGB = Convert-BytesToGB $Device.totalStorageSpaceInBytes
     $FreeGB  = Convert-BytesToGB $Device.freeStorageSpaceInBytes
     $FreePct = Get-Percent -Part $FreeGB -Total $TotalGB
-
-    $VIPGroupName = $VIPDeviceGroupName
-    $VIPMembershipMatchMethod = "Not in VIP group"
-    $DevicePriority = "Standard"
-    $DevicePriorityCategory = "standard"
-    $DevicePrioritySource = "Entra group membership"
 
     $PrimaryUser = "Unknown"
     $PrimaryUserDisplayName = ""
@@ -4312,23 +3491,6 @@ $Rows = foreach ($Device in $ManagedDevices) {
     $LenovoSB2023CurrentBios = ""
     $LenovoSB2023CompareMethod = ""
     $LenovoSB2023CompareDetail = ""
-    $DellSB2023Readiness = "Review - not evaluated"
-    $DellSB2023Category = "review"
-    $DellSB2023Product = ""
-    $DellSB2023Platform = ""
-    $DellSB2023RequiredBios = ""
-    $DellSB2023CurrentBios = ""
-    $DellSB2023CompareMethod = ""
-    $DellSB2023CompareDetail = ""
-    $HPSB2023Readiness = "Review - not evaluated"
-    $HPSB2023Category = "review"
-    $HPSB2023Marker = ""
-    $HPSB2023Product = ""
-    $HPSB2023CurrentBios = ""
-    $HPSB2023SmbiosVersion = ""
-    $HPSB2023CompareMethod = ""
-    $HPSB2023CompareDetail = ""
-    $ComputerSystemProductVersion = ""
     $AutopilotEnrolled = "No"
     $AutopilotProfile = ""
     $AutopilotGroupTag = ""
@@ -4355,19 +3517,6 @@ $Rows = foreach ($Device in $ManagedDevices) {
     $IntuneDeviceEncryptionStatus = ""
     $IntuneDeviceEncryptionRaw = ""
     $IntuneDeviceEncryptionSource = ""
-
-    if ($VIPDeviceGroupRecord) {
-        $DevicePriority = Normalize-Value $VIPDeviceGroupRecord.DevicePriority
-        $DevicePriorityCategory = Normalize-Value $VIPDeviceGroupRecord.DevicePriorityCategory
-        $VIPGroupName = Normalize-Value $VIPDeviceGroupRecord.VIPGroupName
-        $VIPMembershipMatchMethod = Normalize-Value $VIPDeviceGroupRecord.VIPMembershipMatchMethod
-        $DevicePrioritySource = Normalize-Value $VIPDeviceGroupRecord.DevicePrioritySource
-
-        if ([string]::IsNullOrWhiteSpace($DevicePriority)) { $DevicePriority = "Standard" }
-        if ([string]::IsNullOrWhiteSpace($DevicePriorityCategory)) {
-            if ($DevicePriority -eq "VIP") { $DevicePriorityCategory = "vip" } else { $DevicePriorityCategory = "standard" }
-        }
-    }
 
     if ($SecureBootRecord) {
         $SecureBootStatus = Use-ValueOrUnknown $SecureBootRecord.SecureBootStatus
@@ -4422,41 +3571,24 @@ $Rows = foreach ($Device in $ManagedDevices) {
         $BiosMode = Normalize-Value $FirmwareRecord.BiosMode
         $DeviceSKU = Normalize-Value $FirmwareRecord.DeviceSKU
         $SystemBoardModel = Normalize-Value $FirmwareRecord.SystemBoardModel
-        $ComputerSystemProductVersion = Normalize-Value $FirmwareRecord.ComputerSystemProductVersion
         $TPMVersion = Normalize-Value $FirmwareRecord.TPMVersion
         if ([string]::IsNullOrWhiteSpace($TPMVersion)) { $TPMVersion = Normalize-Value $FirmwareRecord.TpmSpecVersion }
         $TpmReady = Normalize-Value $FirmwareRecord.TpmReady
     }
 
-    $LenovoManufacturerText = ((Normalize-Value $Device.manufacturer) + " " + (Normalize-Value $FirmwareManufacturer)).ToLowerInvariant()
-
-    if ($LenovoManufacturerText -match 'lenovo') {
-        $LenovoSB2023Result = Get-LenovoSecureBoot2023Readiness `
-            -DeviceModel (Normalize-Value $Device.model) `
-            -DeviceSKU $DeviceSKU `
-            -SystemBoardModel $SystemBoardModel `
-            -FirmwareVersion $FirmwareVersion `
-            -Requirements $LenovoSecureBoot2023BiosRequirements `
-            -AdditionalValues @(
-                # Keep only fields that can realistically contain Lenovo machine-type/model data.
-                # Do not use serial number, TPM version, or random device name characters for prefix detection.
-                (Normalize-Value $Device.manufacturer),
-                $FirmwareManufacturer,
-                $FirmwareVersion
-            )
-    }
-    else {
-        $LenovoSB2023Result = [pscustomobject]@{
-            Status        = "Not Lenovo"
-            Category      = "notLenovo"
-            ModelPrefix   = ""
-            Product       = ""
-            RequiredBios  = ""
-            CurrentBios   = Normalize-Value $FirmwareVersion
-            CompareMethod = "Manufacturer"
-            CompareDetail = "Device manufacturer is not Lenovo."
-        }
-    }
+    $LenovoSB2023Result = Get-LenovoSecureBoot2023Readiness `
+        -DeviceModel (Normalize-Value $Device.model) `
+        -DeviceSKU $DeviceSKU `
+        -SystemBoardModel $SystemBoardModel `
+        -FirmwareVersion $FirmwareVersion `
+        -Requirements $LenovoSecureBoot2023BiosRequirements `
+        -AdditionalValues @(
+            # Keep only fields that can realistically contain Lenovo machine-type/model data.
+            # Do not use serial number, TPM version, or random device name characters for prefix detection.
+            (Normalize-Value $Device.manufacturer),
+            $FirmwareManufacturer,
+            $FirmwareVersion
+        )
 
     $LenovoSB2023Readiness = Normalize-Value $LenovoSB2023Result.Status
     $LenovoSB2023Category = Normalize-Value $LenovoSB2023Result.Category
@@ -4466,50 +3598,6 @@ $Rows = foreach ($Device in $ManagedDevices) {
     $LenovoSB2023CurrentBios = Normalize-Value $LenovoSB2023Result.CurrentBios
     $LenovoSB2023CompareMethod = Normalize-Value $LenovoSB2023Result.CompareMethod
     $LenovoSB2023CompareDetail = Normalize-Value $LenovoSB2023Result.CompareDetail
-
-    $DellSB2023Result = Get-DellSecureBoot2023Readiness `
-        -Manufacturer (Normalize-Value $Device.manufacturer) `
-        -DeviceModel (Normalize-Value $Device.model) `
-        -DeviceSKU $DeviceSKU `
-        -SystemBoardModel $SystemBoardModel `
-        -FirmwareVersion $FirmwareVersion `
-        -Requirements $DellSecureBoot2023BiosRequirements `
-        -AdditionalValues @(
-            $FirmwareManufacturer,
-            $FirmwareVersion
-        )
-
-    $DellSB2023Readiness = Normalize-Value $DellSB2023Result.Status
-    $DellSB2023Category = Normalize-Value $DellSB2023Result.Category
-    $DellSB2023Product = Normalize-Value $DellSB2023Result.Product
-    $DellSB2023Platform = Normalize-Value $DellSB2023Result.Platform
-    $DellSB2023RequiredBios = Normalize-Value $DellSB2023Result.RequiredBios
-    $DellSB2023CurrentBios = Normalize-Value $DellSB2023Result.CurrentBios
-    $DellSB2023CompareMethod = Normalize-Value $DellSB2023Result.CompareMethod
-    $DellSB2023CompareDetail = Normalize-Value $DellSB2023Result.CompareDetail
-
-    $HPSB2023Result = Get-HPSecureBoot2023Readiness `
-        -Manufacturer (Normalize-Value $Device.manufacturer) `
-        -DeviceModel (Normalize-Value $Device.model) `
-        -DeviceSKU $DeviceSKU `
-        -SystemBoardModel $SystemBoardModel `
-        -ComputerSystemProductVersion $ComputerSystemProductVersion `
-        -FirmwareVersion $FirmwareVersion `
-        -AdditionalValues @(
-            $FirmwareManufacturer,
-            $SystemBoardModel,
-            $DeviceSKU,
-            $ComputerSystemProductVersion
-        )
-
-    $HPSB2023Readiness = Normalize-Value $HPSB2023Result.Status
-    $HPSB2023Category = Normalize-Value $HPSB2023Result.Category
-    $HPSB2023Marker = Normalize-Value $HPSB2023Result.Marker
-    $HPSB2023Product = Normalize-Value $HPSB2023Result.Product
-    $HPSB2023CurrentBios = Normalize-Value $HPSB2023Result.CurrentBios
-    $HPSB2023SmbiosVersion = Normalize-Value $HPSB2023Result.SmbiosVersion
-    $HPSB2023CompareMethod = Normalize-Value $HPSB2023Result.CompareMethod
-    $HPSB2023CompareDetail = Normalize-Value $HPSB2023Result.CompareDetail
 
     if ($AutopilotRecord) {
         $AutopilotEnrolled = "Yes"
@@ -4637,11 +3725,6 @@ $Rows = foreach ($Device in $ManagedDevices) {
 
     [pscustomobject]@{
         DeviceName                      = $DeviceName
-        DevicePriority                  = $DevicePriority
-        DevicePriorityCategory          = $DevicePriorityCategory
-        VIPGroupName                    = $VIPGroupName
-        VIPMembershipMatchMethod        = $VIPMembershipMatchMethod
-        DevicePrioritySource            = $DevicePrioritySource
         UserPrincipalName               = Normalize-Value $Device.userPrincipalName
         UserDisplayName                 = Normalize-Value $Device.userDisplayName
         EmailAddress                    = Normalize-Value $Device.emailAddress
@@ -4695,23 +3778,6 @@ $Rows = foreach ($Device in $ManagedDevices) {
         LenovoSB2023CurrentBios         = $LenovoSB2023CurrentBios
         LenovoSB2023CompareMethod       = $LenovoSB2023CompareMethod
         LenovoSB2023CompareDetail       = $LenovoSB2023CompareDetail
-        DellSB2023Readiness             = $DellSB2023Readiness
-        DellSB2023Category              = $DellSB2023Category
-        DellSB2023Product               = $DellSB2023Product
-        DellSB2023Platform              = $DellSB2023Platform
-        DellSB2023RequiredBios          = $DellSB2023RequiredBios
-        DellSB2023CurrentBios           = $DellSB2023CurrentBios
-        DellSB2023CompareMethod         = $DellSB2023CompareMethod
-        DellSB2023CompareDetail         = $DellSB2023CompareDetail
-        HPSB2023Readiness               = $HPSB2023Readiness
-        HPSB2023Category                = $HPSB2023Category
-        HPSB2023Marker                  = $HPSB2023Marker
-        HPSB2023Product                 = $HPSB2023Product
-        HPSB2023CurrentBios             = $HPSB2023CurrentBios
-        HPSB2023SmbiosVersion           = $HPSB2023SmbiosVersion
-        HPSB2023CompareMethod           = $HPSB2023CompareMethod
-        HPSB2023CompareDetail           = $HPSB2023CompareDetail
-        ComputerSystemProductVersion    = $ComputerSystemProductVersion
 
         AutopilotEnrolled               = $AutopilotEnrolled
         AutopilotProfile                = $AutopilotProfile
@@ -4941,24 +4007,6 @@ foreach ($Row in $Rows) {
         $RiskReasons += "Lenovo Secure Boot 2023 BIOS readiness review"
     }
 
-    if ((Normalize-Value $Row.DellSB2023Category) -eq "update") {
-        $RiskScore += 25
-        $RiskReasons += "Dell BIOS update required for Secure Boot 2023"
-    }
-    elseif ((Normalize-Value $Row.DellSB2023Category) -eq "review") {
-        $RiskScore += 5
-        $RiskReasons += "Dell Secure Boot 2023 BIOS readiness review"
-    }
-
-    if ((Normalize-Value $Row.HPSB2023Category) -eq "update") {
-        $RiskScore += 25
-        $RiskReasons += "HP BIOS update required for Secure Boot 2023"
-    }
-    elseif ((Normalize-Value $Row.HPSB2023Category) -eq "review") {
-        $RiskScore += 5
-        $RiskReasons += "HP Secure Boot 2023 BIOS readiness review"
-    }
-
     if ((Normalize-Value $Row.OSUBRStatus) -eq "Below target") {
         $RiskScore += 15
         $RiskReasons += "Below UBR target"
@@ -5040,17 +4088,9 @@ $RowsWithStale30 = @($Rows | Where-Object { $_.CheckInHealthCategory -in @("stal
 $RowsWithLowStorage = @($Rows | Where-Object { $_.StorageStatusCategory -in @("critical","low") }).Count
 $RowsWithDuplicateSerial = @($Rows | Where-Object { $_.DuplicateSerial -eq "Yes" }).Count
 $RowsWithDuplicateDeviceName = @($Rows | Where-Object { $_.DuplicateDeviceName -eq "Yes" }).Count
-$RowsWithVIPDevices = @($Rows | Where-Object { $_.DevicePriority -eq "VIP" }).Count
-$RowsWithStandardDevices = @($Rows | Where-Object { $_.DevicePriority -eq "Standard" }).Count
 $RowsLenovoSBReady = @($Rows | Where-Object { $_.LenovoSB2023Category -eq "ready" }).Count
 $RowsLenovoSBUpdate = @($Rows | Where-Object { $_.LenovoSB2023Category -eq "update" }).Count
 $RowsLenovoSBReview = @($Rows | Where-Object { $_.LenovoSB2023Category -eq "review" }).Count
-$RowsDellSBReady = @($Rows | Where-Object { $_.DellSB2023Category -eq "ready" }).Count
-$RowsDellSBUpdate = @($Rows | Where-Object { $_.DellSB2023Category -eq "update" }).Count
-$RowsDellSBReview = @($Rows | Where-Object { $_.DellSB2023Category -eq "review" }).Count
-$RowsHPSBReady = @($Rows | Where-Object { $_.HPSB2023Category -eq "ready" }).Count
-$RowsHPSBUpdate = @($Rows | Where-Object { $_.HPSB2023Category -eq "update" }).Count
-$RowsHPSBReview = @($Rows | Where-Object { $_.HPSB2023Category -eq "review" }).Count
 
 Write-Host "Critical risk devices: $RowsWithCriticalRisk" -ForegroundColor Red
 Write-Host "High risk devices: $RowsWithHighRisk" -ForegroundColor Yellow
@@ -5059,17 +4099,9 @@ Write-Host "Stale devices >30 days or never: $RowsWithStale30" -ForegroundColor 
 Write-Host "Low storage devices: $RowsWithLowStorage" -ForegroundColor Yellow
 Write-Host "Duplicate serial devices: $RowsWithDuplicateSerial" -ForegroundColor Yellow
 Write-Host "Duplicate device name devices: $RowsWithDuplicateDeviceName" -ForegroundColor Yellow
-Write-Host "VIP devices: $RowsWithVIPDevices" -ForegroundColor Green
-Write-Host "Standard devices: $RowsWithStandardDevices" -ForegroundColor Green
 Write-Host "Lenovo Secure Boot 2023 BIOS ready: $RowsLenovoSBReady" -ForegroundColor Green
 Write-Host "Lenovo Secure Boot 2023 BIOS update required: $RowsLenovoSBUpdate" -ForegroundColor Yellow
 Write-Host "Lenovo Secure Boot 2023 BIOS review: $RowsLenovoSBReview" -ForegroundColor Yellow
-Write-Host "Dell Secure Boot 2023 BIOS ready: $RowsDellSBReady" -ForegroundColor Green
-Write-Host "Dell Secure Boot 2023 BIOS update required: $RowsDellSBUpdate" -ForegroundColor Yellow
-Write-Host "Dell Secure Boot 2023 BIOS review: $RowsDellSBReview" -ForegroundColor Yellow
-Write-Host "HP Secure Boot 2023 BIOS ready: $RowsHPSBReady" -ForegroundColor Green
-Write-Host "HP Secure Boot 2023 BIOS update required: $RowsHPSBUpdate" -ForegroundColor Yellow
-Write-Host "HP Secure Boot 2023 BIOS review: $RowsHPSBReview" -ForegroundColor Yellow
 
 
 $RowsWithPrimaryUserDisabled = @($Rows | Where-Object { $_.PrimaryUserAccountStatus -eq "Disabled" }).Count
@@ -5161,13 +4193,13 @@ $Html = @"
     * { box-sizing: border-box; }
 
     body {
-        margin: 0;
-        font-family: Segoe UI, Arial, sans-serif;
-        background:
-            radial-gradient(circle at top left, #e0ecff 0, transparent 34%),
-            linear-gradient(180deg, #f8fbff 0, #eef3f9 100%);
-        color: var(--text);
-    }
+    margin: 0;
+    font-family: Aptos, "Segoe UI", Arial, sans-serif;
+    background:
+        radial-gradient(circle at top left, #e0ecff 0, transparent 34%),
+        linear-gradient(180deg, #f8fbff 0, #eef3f9 100%);
+    color: var(--text);
+}
 
     header { padding: 28px 34px 16px 34px; }
 
@@ -5522,12 +4554,6 @@ $Html = @"
         </div>
 
         <div class="card">
-            <div class="card-title">⭐ VIP Devices</div>
-            <div class="card-value info" id="cardVIPDevices">0</div>
-            <div class="card-note" id="cardVIPDevicesNote">Member of VIP group</div>
-        </div>
-
-        <div class="card">
             <div class="card-title">✅ Compliant</div>
             <div class="card-value good" id="cardCompliant">0</div>
             <div class="card-note" id="cardCompliantNote">0% of filtered devices</div>
@@ -5624,30 +4650,6 @@ $Html = @"
         </div>
 
         <div class="card">
-            <div class="card-title">✅ Dell SB 2023 Ready</div>
-            <div class="card-value good" id="cardDellSBReady">0</div>
-            <div class="card-note">BIOS meets Dell minimum</div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">⚠️ Dell BIOS Update</div>
-            <div class="card-value warn" id="cardDellSBUpdate">0</div>
-            <div class="card-note">Below Dell minimum BIOS</div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">✅ HP SB 2023 Ready</div>
-            <div class="card-value good" id="cardHPSBReady">0</div>
-            <div class="card-note">SBKPFV3 marker present</div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">⚠️ HP BIOS Update</div>
-            <div class="card-value warn" id="cardHPSBUpdate">0</div>
-            <div class="card-note">SBKPFV3 marker missing</div>
-        </div>
-
-        <div class="card">
             <div class="card-title">📦 Autopilot Enrolled</div>
             <div class="card-value good" id="cardAutopilotEnrolled">0</div>
             <div class="card-note">Matched by Entra ID / serial / name</div>
@@ -5715,14 +4717,6 @@ $Html = @"
 
         <div class="toolbar">
             <input id="searchBox" type="text" placeholder="🔎 Search device, user, model, serial, OS..." oninput="renderDashboard()">
-
-            <details class="check-filter" id="devicePriorityFilterMenu">
-                <summary><span id="devicePriorityFilterSummary">All VIP states</span></summary>
-                <div class="check-filter-panel">
-                    <label><input type="checkbox" name="devicePriorityFilter" value="vip" data-label="VIP" onchange="onCheckboxFilterChanged()"> VIP</label>
-                    <label><input type="checkbox" name="devicePriorityFilter" value="standard" data-label="Standard" onchange="onCheckboxFilterChanged()"> Standard</label>
-                </div>
-            </details>
 
             <details class="check-filter" id="complianceFilterMenu">
                 <summary><span id="complianceFilterSummary">All compliance states</span></summary>
@@ -5819,27 +4813,6 @@ $Html = @"
                     <label><input type="checkbox" name="lenovoSB2023Filter" value="update" data-label="Update BIOS" onchange="onCheckboxFilterChanged()"> Update BIOS</label>
                     <label><input type="checkbox" name="lenovoSB2023Filter" value="review" data-label="Review" onchange="onCheckboxFilterChanged()"> Review</label>
                     <label><input type="checkbox" name="lenovoSB2023Filter" value="notListed" data-label="Not in Lenovo list" onchange="onCheckboxFilterChanged()"> Not in Lenovo list</label>
-                </div>
-            </details>
-
-            <details class="check-filter" id="dellSB2023FilterMenu">
-                <summary><span id="dellSB2023FilterSummary">All Dell SB 2023 states</span></summary>
-                <div class="check-filter-panel">
-                    <label><input type="checkbox" name="dellSB2023Filter" value="ready" data-label="Ready" onchange="onCheckboxFilterChanged()"> Ready</label>
-                    <label><input type="checkbox" name="dellSB2023Filter" value="update" data-label="Update BIOS" onchange="onCheckboxFilterChanged()"> Update BIOS</label>
-                    <label><input type="checkbox" name="dellSB2023Filter" value="review" data-label="Review" onchange="onCheckboxFilterChanged()"> Review</label>
-                    <label><input type="checkbox" name="dellSB2023Filter" value="notListed" data-label="Not in Dell list" onchange="onCheckboxFilterChanged()"> Not in Dell list</label>
-                    <label><input type="checkbox" name="dellSB2023Filter" value="notDell" data-label="Not Dell" onchange="onCheckboxFilterChanged()"> Not Dell</label>
-                </div>
-            </details>
-
-            <details class="check-filter" id="hpSB2023FilterMenu">
-                <summary><span id="hpSB2023FilterSummary">All HP SB 2023 states</span></summary>
-                <div class="check-filter-panel">
-                    <label><input type="checkbox" name="hpSB2023Filter" value="ready" data-label="Ready" onchange="onCheckboxFilterChanged()"> Ready</label>
-                    <label><input type="checkbox" name="hpSB2023Filter" value="update" data-label="Update BIOS" onchange="onCheckboxFilterChanged()"> Update BIOS</label>
-                    <label><input type="checkbox" name="hpSB2023Filter" value="review" data-label="Review" onchange="onCheckboxFilterChanged()"> Review</label>
-                    <label><input type="checkbox" name="hpSB2023Filter" value="notHP" data-label="Not HP" onchange="onCheckboxFilterChanged()"> Not HP</label>
                 </div>
             </details>
 
@@ -5945,8 +4918,8 @@ $Html = @"
                 <thead>
                     <tr>
                         <th>🚦 Risk</th>
+                        <th>🧠 Issues</th>
                         <th>🖥️ Device</th>
-                        <th>⭐ VIP</th>
                         <th>👤 User</th>
                         <th>👥 Primary User</th>
                         <th>🚦 Primary User Status</th>
@@ -5981,12 +4954,6 @@ $Html = @"
                         <th>✅ Lenovo SB 2023</th>
                         <th>📌 Lenovo Required BIOS</th>
                         <th>🧩 Lenovo Product</th>
-                        <th>✅ Dell SB 2023</th>
-                        <th>📌 Dell Required BIOS</th>
-                        <th>🧩 Dell Platform</th>
-                        <th>✅ HP SB 2023</th>
-                        <th>🏷️ HP Marker</th>
-                        <th>🧾 HP SMBIOS Version</th>
                         <th>🧭 BIOS Mode</th>
                         <th>🔒 TPM</th>
                         <th>🕒 Last Check-in</th>
@@ -5996,7 +4963,6 @@ $Html = @"
                         <th>📦 Storage Status</th>
                         <th>👯 Duplicate Name</th>
                         <th>🏷️ Duplicate Serial</th>
-                        <th>🧠 Issues</th>
                     </tr>
                 </thead>
                 <tbody id="deviceTableBody"></tbody>
@@ -6264,7 +5230,6 @@ function pill(value, type) {
         const v = clean.toLowerCase();
         if (v === "ready") cls += " good";
         else if (v === "update bios") cls += " bad";
-        else if (v === "n/a" || v.startsWith("not ")) cls += "";
         else cls += " warn";
     }
 
@@ -6331,7 +5296,6 @@ function updateFilterSummary(summaryId, filterName, defaultText) {
 }
 
 function updateFilterSummaries() {
-    updateFilterSummary("devicePriorityFilterSummary", "devicePriorityFilter", "All VIP states");
     updateFilterSummary("complianceFilterSummary", "complianceFilter", "All compliance states");
     updateFilterSummary("riskFilterSummary", "riskFilter", "All risk levels");
     updateFilterSummary("checkInHealthFilterSummary", "checkInHealthFilter", "All check-in health");
@@ -6341,9 +5305,6 @@ function updateFilterSummaries() {
     updateFilterSummary("autopilotFilterSummary", "autopilotFilter", "All Autopilot states");
     updateFilterSummary("enrollmentQualityFilterSummary", "enrollmentQualityFilter", "All enrollment quality");
     updateFilterSummary("biosModeFilterSummary", "biosModeFilter", "All BIOS modes");
-    updateFilterSummary("lenovoSB2023FilterSummary", "lenovoSB2023Filter", "All Lenovo SB 2023 states");
-    updateFilterSummary("dellSB2023FilterSummary", "dellSB2023Filter", "All Dell SB 2023 states");
-    updateFilterSummary("hpSB2023FilterSummary", "hpSB2023Filter", "All HP SB 2023 states");
     updateFilterSummary("primaryStatusFilterSummary", "primaryStatusFilter", "All primary user states");
     updateFilterSummary("secureBootFilterSummary", "secureBootFilter", "All Secure Boot states");
     updateFilterSummary("defenderFilterSummary", "defenderFilter", "All Defender states");
@@ -6455,7 +5416,6 @@ function onLastSyncPresetChanged() {
 
 function clearAllFilters() {
     document.getElementById("searchBox").value = "";
-    clearCheckboxGroup("devicePriorityFilter");
     clearCheckboxGroup("complianceFilter");
     clearCheckboxGroup("riskFilter");
     clearCheckboxGroup("checkInHealthFilter");
@@ -6465,9 +5425,6 @@ function clearAllFilters() {
     clearCheckboxGroup("autopilotFilter");
     clearCheckboxGroup("enrollmentQualityFilter");
     clearCheckboxGroup("biosModeFilter");
-    clearCheckboxGroup("lenovoSB2023Filter");
-    clearCheckboxGroup("dellSB2023Filter");
-    clearCheckboxGroup("hpSB2023Filter");
     clearCheckboxGroup("primaryStatusFilter");
     clearCheckboxGroup("secureBootFilter");
     clearCheckboxGroup("defenderFilter");
@@ -6484,7 +5441,6 @@ function clearAllFilters() {
 
 function getFilteredDevices() {
     const search = document.getElementById("searchBox").value.toLowerCase();
-    const devicePriority = getCheckedValues("devicePriorityFilter");
     const compliance = getCheckedValues("complianceFilter");
     const risk = getCheckedValues("riskFilter");
     const checkInHealth = getCheckedValues("checkInHealthFilter");
@@ -6495,8 +5451,6 @@ function getFilteredDevices() {
     const enrollmentQuality = getCheckedValues("enrollmentQualityFilter");
     const biosMode = getCheckedValues("biosModeFilter");
     const lenovoSB2023 = getCheckedValues("lenovoSB2023Filter");
-    const dellSB2023 = getCheckedValues("dellSB2023Filter");
-    const hpSB2023 = getCheckedValues("hpSB2023Filter");
     const primaryStatus = getCheckedValues("primaryStatusFilter");
     const secureBoot = getCheckedValues("secureBootFilter");
     const defender = getCheckedValues("defenderFilter");
@@ -6509,11 +5463,6 @@ function getFilteredDevices() {
     return devices.filter(function(d) {
         const blob = Object.values(d).join(" ").toLowerCase();
         if (search && !blob.includes(search)) return false;
-
-        if (devicePriority.length) {
-            const priority = String(d.DevicePriorityCategory || "standard").toLowerCase();
-            if (!matchesAny(devicePriority, function(value) { return priority === value; })) return false;
-        }
 
         if (compliance.length) {
             const state = String(d.ComplianceState || "").toLowerCase();
@@ -6578,16 +5527,6 @@ function getFilteredDevices() {
         if (lenovoSB2023.length) {
             const lenovoCategory = String(d.LenovoSB2023Category || "review");
             if (!matchesAny(lenovoSB2023, function(value) { return lenovoCategory === value; })) return false;
-        }
-
-        if (dellSB2023.length) {
-            const dellCategory = String(d.DellSB2023Category || "review");
-            if (!matchesAny(dellSB2023, function(value) { return dellCategory === value; })) return false;
-        }
-
-        if (hpSB2023.length) {
-            const hpCategory = String(d.HPSB2023Category || "review");
-            if (!matchesAny(hpSB2023, function(value) { return hpCategory === value; })) return false;
         }
 
         if (primaryStatus.length) {
@@ -6691,12 +5630,6 @@ function updateTopIssues(rows) {
             count: rows.filter(function(d) { return String(d.LenovoSB2023Category || "") === "update"; }).length
         },
         {
-            icon: "🧬",
-            title: "Dell BIOS update required",
-            subtitle: "BIOS below Dell minimum for Secure Boot 2023 certificate readiness",
-            count: rows.filter(function(d) { return String(d.DellSB2023Category || "") === "update"; }).length
-        },
-        {
             icon: "📦",
             title: "Autopilot / enrollment review",
             subtitle: "Not Autopilot or enrollment quality requires review",
@@ -6784,13 +5717,8 @@ function updateQuickLook(rows) {
     const firmwareInventory = rows.filter(function(d) { return String(d.FirmwareVersion || "").trim() !== ""; }).length;
     const lenovoSBReady = rows.filter(function(d) { return String(d.LenovoSB2023Category || "").toLowerCase() === "ready"; }).length;
     const lenovoSBUpdate = rows.filter(function(d) { return String(d.LenovoSB2023Category || "").toLowerCase() === "update"; }).length;
-    const dellSBReady = rows.filter(function(d) { return String(d.DellSB2023Category || "").toLowerCase() === "ready"; }).length;
-    const dellSBUpdate = rows.filter(function(d) { return String(d.DellSB2023Category || "").toLowerCase() === "update"; }).length;
-    const hpSBReady = rows.filter(function(d) { return String(d.HPSB2023Category || "").toLowerCase() === "ready"; }).length;
-    const hpSBUpdate = rows.filter(function(d) { return String(d.HPSB2023Category || "").toLowerCase() === "update"; }).length;
     const autopilotEnrolled = rows.filter(function(d) { return String(d.AutopilotEnrolled || "").toLowerCase() === "yes"; }).length;
 
-    const vipDevices = rows.filter(function(d) { return String(d.DevicePriority || "").toLowerCase() === "vip"; }).length;
     const compliant = rows.filter(function(d) { return String(d.ComplianceState || "").toLowerCase() === "compliant"; }).length;
     const nonCompliant = rows.filter(function(d) { return String(d.ComplianceState || "").toLowerCase() === "noncompliant"; }).length;
     const complianceOther = total - compliant - nonCompliant;
@@ -6822,13 +5750,7 @@ function updateQuickLook(rows) {
     setText("cardFirmwareInventory", firmwareInventory);
     setText("cardLenovoSBReady", lenovoSBReady);
     setText("cardLenovoSBUpdate", lenovoSBUpdate);
-    setText("cardDellSBReady", dellSBReady);
-    setText("cardDellSBUpdate", dellSBUpdate);
-    setText("cardHPSBReady", hpSBReady);
-    setText("cardHPSBUpdate", hpSBUpdate);
     setText("cardAutopilotEnrolled", autopilotEnrolled);
-    setText("cardVIPDevices", vipDevices);
-    setText("cardVIPDevicesNote", pct(vipDevices, total) + "% of filtered devices");
     setText("cardCompliant", compliant);
     setText("cardCompliantNote", pct(compliant, total) + "% of filtered devices");
     setText("cardNonCompliant", nonCompliant);
@@ -6898,28 +5820,6 @@ function drawerSection(title, rows) {
         '</div></div>';
 }
 
-function manufacturerText(d) {
-    return [d.Manufacturer, d.FirmwareManufacturer, d.Model, d.DeviceSKU, d.SystemBoardModel]
-        .filter(function(v) { return v !== null && v !== undefined && String(v).trim() !== ""; })
-        .join(" ")
-        .toLowerCase();
-}
-
-function isLenovoDevice(d) {
-    const text = manufacturerText(d);
-    return text.includes("lenovo") || String(d.LenovoSB2023Category || "").toLowerCase() === "ready" || String(d.LenovoSB2023Category || "").toLowerCase() === "update";
-}
-
-function isDellDevice(d) {
-    const text = manufacturerText(d);
-    return text.includes("dell") || String(d.DellSB2023Category || "").toLowerCase() === "ready" || String(d.DellSB2023Category || "").toLowerCase() === "update";
-}
-
-function isHPDevice(d) {
-    const text = manufacturerText(d);
-    return /(^|\s)(hp)(\s|$)/.test(text) || text.includes("hewlett") || String(d.HPSB2023Category || "").toLowerCase() === "ready" || String(d.HPSB2023Category || "").toLowerCase() === "update";
-}
-
 function openDeviceDrawer(deviceId) {
     const id = String(deviceId || "");
     const d = devices.find(function(x) {
@@ -6930,68 +5830,6 @@ function openDeviceDrawer(deviceId) {
 
     document.getElementById("drawerTitle").innerText = d.DeviceName || "Device details";
     document.getElementById("drawerSubtitle").innerText = (d.UserDisplayName || d.UserPrincipalName || "") + " • " + (d.OSFriendlyVersion || "");
-
-    const hardwareRows = [
-        ["OS", d.OSFriendlyVersion],
-        ["OS version", d.OSVersion],
-        ["Build", d.OSBuild],
-        ["UBR", d.OSUBR],
-        ["UBR status", d.OSUBRStatus],
-        ["Manufacturer", d.Manufacturer],
-        ["Model", d.Model],
-        ["Serial", d.SerialNumber],
-        ["VIP status", d.DevicePriority],
-        ["VIP source", d.DevicePrioritySource],
-        ["VIP group", d.VIPGroupName],
-        ["VIP match", d.VIPMembershipMatchMethod],
-        ["Firmware manufacturer", d.FirmwareManufacturer],
-        ["Firmware version", d.FirmwareVersion],
-        ["Firmware release date", d.FirmwareReleaseDate]
-    ];
-
-    if (isLenovoDevice(d)) {
-        hardwareRows.push(
-            ["Lenovo SB 2023 readiness", d.LenovoSB2023Readiness],
-            ["Lenovo product", d.LenovoSB2023Product],
-            ["Lenovo model prefix", d.LenovoSB2023ModelPrefix],
-            ["Lenovo required BIOS", d.LenovoSB2023RequiredBios],
-            ["Lenovo current BIOS", d.LenovoSB2023CurrentBios],
-            ["Lenovo compare method", d.LenovoSB2023CompareMethod],
-            ["Lenovo compare detail", d.LenovoSB2023CompareDetail]
-        );
-    }
-
-    if (isDellDevice(d)) {
-        hardwareRows.push(
-            ["Dell SB 2023 readiness", d.DellSB2023Readiness],
-            ["Dell product", d.DellSB2023Product],
-            ["Dell platform", d.DellSB2023Platform],
-            ["Dell required BIOS", d.DellSB2023RequiredBios],
-            ["Dell current BIOS", d.DellSB2023CurrentBios],
-            ["Dell compare method", d.DellSB2023CompareMethod],
-            ["Dell compare detail", d.DellSB2023CompareDetail]
-        );
-    }
-
-    if (isHPDevice(d)) {
-        hardwareRows.push(
-            ["HP SB 2023 readiness", d.HPSB2023Readiness],
-            ["HP product", d.HPSB2023Product],
-            ["HP marker", d.HPSB2023Marker],
-            ["HP current BIOS", d.HPSB2023CurrentBios],
-            ["HP SMBIOS version", d.HPSB2023SmbiosVersion],
-            ["HP compare method", d.HPSB2023CompareMethod],
-            ["HP compare detail", d.HPSB2023CompareDetail]
-        );
-    }
-
-    hardwareRows.push(
-        ["BIOS mode", d.BiosMode],
-        ["Device SKU", d.DeviceSKU],
-        ["System board model", d.SystemBoardModel],
-        ["TPM version", d.TPMVersion],
-        ["TPM ready", d.TpmReady]
-    );
 
     const html = [
         drawerSection("🚦 Risk", [
@@ -7030,7 +5868,31 @@ function openDeviceDrawer(deviceId) {
             ["BL protection", d.BitLockerProtectionStatus],
             ["BL protectors", d.BitLockerKeyProtectors]
         ]),
-        drawerSection("🪟 OS / hardware", hardwareRows),
+        drawerSection("🪟 OS / hardware", [
+            ["OS", d.OSFriendlyVersion],
+            ["OS version", d.OSVersion],
+            ["Build", d.OSBuild],
+            ["UBR", d.OSUBR],
+            ["UBR status", d.OSUBRStatus],
+            ["Manufacturer", d.Manufacturer],
+            ["Model", d.Model],
+            ["Serial", d.SerialNumber],
+            ["Firmware manufacturer", d.FirmwareManufacturer],
+            ["Firmware version", d.FirmwareVersion],
+            ["Firmware release date", d.FirmwareReleaseDate],
+            ["Lenovo SB 2023 readiness", d.LenovoSB2023Readiness],
+            ["Lenovo product", d.LenovoSB2023Product],
+            ["Lenovo model prefix", d.LenovoSB2023ModelPrefix],
+            ["Lenovo required BIOS", d.LenovoSB2023RequiredBios],
+            ["Lenovo current BIOS", d.LenovoSB2023CurrentBios],
+            ["Lenovo compare method", d.LenovoSB2023CompareMethod],
+            ["Lenovo compare detail", d.LenovoSB2023CompareDetail],
+            ["BIOS mode", d.BiosMode],
+            ["Device SKU", d.DeviceSKU],
+            ["System board model", d.SystemBoardModel],
+            ["TPM version", d.TPMVersion],
+            ["TPM ready", d.TpmReady]
+        ]),
         drawerSection("💾 Storage / identity", [
             ["Free storage %", d.FreeStoragePercent],
             ["Storage status", d.StorageStatus],
@@ -7068,8 +5930,8 @@ function renderTable(rows) {
         return "" +
             "<tr class='clickable-row' onclick=\"openDeviceDrawer('" + deviceId + "')\">" +
             "<td>" + pill(d.RiskLevel || "Low", "risk") + "</td>" +
+            "<td>" + escapeHtml(d.RiskReasons) + "</td>" +
             "<td>" + escapeHtml(d.DeviceName) + "</td>" +
-            "<td>" + pill(d.DevicePriority || "Standard", "devicepriority") + "</td>" +
             "<td>" + escapeHtml(d.UserDisplayName || d.UserPrincipalName) + "</td>" +
             "<td>" + escapeHtml(d.PrimaryUser) + "</td>" +
             "<td>" + pill(d.PrimaryUserAccountStatus, "primaryuser") + "</td>" +
@@ -7101,15 +5963,9 @@ function renderTable(rows) {
             "<td>" + pill(d.EnrollmentQuality || "Unknown", "enrollment") + "</td>" +
             "<td>" + escapeHtml(d.AutopilotProfile) + "</td>" +
             "<td>" + escapeHtml(d.FirmwareVersion) + "</td>" +
-            "<td>" + (isLenovoDevice(d) ? pill(d.LenovoSB2023Readiness || "Review", "lenovo") : "—") + "</td>" +
-            "<td>" + (isLenovoDevice(d) ? escapeHtml(d.LenovoSB2023RequiredBios) : "—") + "</td>" +
-            "<td>" + (isLenovoDevice(d) ? escapeHtml(d.LenovoSB2023Product) : "—") + "</td>" +
-            "<td>" + (isDellDevice(d) ? pill(d.DellSB2023Readiness || "Review", "lenovo") : "—") + "</td>" +
-            "<td>" + (isDellDevice(d) ? escapeHtml(d.DellSB2023RequiredBios) : "—") + "</td>" +
-            "<td>" + (isDellDevice(d) ? escapeHtml(d.DellSB2023Platform) : "—") + "</td>" +
-            "<td>" + (isHPDevice(d) ? pill(d.HPSB2023Readiness || "Review", "lenovo") : "—") + "</td>" +
-            "<td>" + (isHPDevice(d) ? escapeHtml(d.HPSB2023Marker) : "—") + "</td>" +
-            "<td>" + (isHPDevice(d) ? escapeHtml(d.HPSB2023SmbiosVersion) : "—") + "</td>" +
+            "<td>" + pill(d.LenovoSB2023Readiness || "Review", "lenovo") + "</td>" +
+            "<td>" + escapeHtml(d.LenovoSB2023RequiredBios) + "</td>" +
+            "<td>" + escapeHtml(d.LenovoSB2023Product) + "</td>" +
             "<td>" + escapeHtml(d.BiosMode) + "</td>" +
             "<td>" + escapeHtml(d.TPMVersion || d.TpmReady) + "</td>" +
             "<td>" + escapeHtml(d.LastSyncDateTime) + "</td>" +
@@ -7119,7 +5975,6 @@ function renderTable(rows) {
             "<td>" + pill(d.StorageStatus || "Unknown", "storage") + "</td>" +
             "<td>" + pill(d.DuplicateDeviceName || "No", "duplicate") + "</td>" +
             "<td>" + pill(d.DuplicateSerial || "No", "duplicate") + "</td>" +
-            "<td>" + escapeHtml(d.RiskReasons) + "</td>" +
             "</tr>";
     }).join("");
 }

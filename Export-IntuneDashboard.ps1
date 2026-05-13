@@ -1,19 +1,20 @@
 <#
 .SYNOPSIS
-    Export Intune Windows device dashboard to HTML + CSV + JSON.
+    Export Intune device dashboard to HTML + CSV + JSON.
 
 .DESCRIPTION
-    Retrieves Windows managed devices from Microsoft Graph and builds a self-contained HTML dashboard.
+    Retrieves Windows, macOS, and Android managed devices from Microsoft Graph and builds a self-contained HTML dashboard.
     Fixed null-safe property reading for Autopilot profile expansion and tenant remediation names.
     Exports files into a customer/day/run folder structure.
 
     Included:
-        * Windows devices: device name, Intune ID, Entra device ID, serial number, manufacturer, model, OS, compliance, owner type, enrollment date, and last check-in.
+        * Windows, macOS, and Android devices: device name, Intune ID, Entra device ID, serial number, manufacturer, model, OS, OS version, compliance, owner type, enrollment date, and last check-in.
         * Storage: total disk space, free disk space, and free storage percentage.
         * Primary user: assigned Intune primary user, display name, UPN, email, and user ID.
         * User account status: whether the primary user account is enabled, disabled, missing, or unknown in Entra ID.
         * OS / UBR status: Windows build, Windows version, UBR level, and whether it meets the configured target.
         * Secure Boot: Secure Boot enabled, disabled, unknown, not supported, or not applicable.
+        * Lenovo Secure Boot remediation: run state, status, and remediation error details from Remediate - Secure boot - Enable secure boot on Lenovo.
         * Microsoft Defender: Defender deployment status, protection state, real-time protection, signature status, engine version, and reboot requirement.
         * BitLocker: encryption percentage, volume status, protection state, key protectors, encryption method, and last remediation run.
         * Device encryption fallback: Intune encryption status when BitLocker remediation data is missing.
@@ -39,7 +40,7 @@
 
 .EXECUTION
 
-.\Export-IntuneDashboard.ps1 -MinimumUBR_26100 8037 -MinimumUBR_26200 8037 -MaxBitLockerRunStates 5000 -MaxDefenderDetailQueries 5000 -MaxInventoryRunStates 5000 -OpenReport
+.\Export-IntuneDashboard.ps1 -MinimumUBR_26100 8037 -MinimumUBR_26200 8037 -MaxBitLockerRunStates 5000 -MaxDefenderDetailQueries 5000 -MaxInventoryRunStates 5000 -MaxSecureBootRunStates 5000 -OpenReport
 
 
 #>
@@ -66,7 +67,11 @@ param(
 
     [string]$FirmwareInventoryRemediationName = "Monitoring - Detection - Firmware - Get status",
 
+    [string]$LenovoSecureBootRemediationName = "Remediate - Secure boot - Enable secure boot on Lenovo",
+
     [int]$MaxInventoryRunStates = 5000,
+
+    [int]$MaxSecureBootRunStates = 5000,
 
     [string]$LenovoSecureBootBiosCsvPath,
 
@@ -120,13 +125,14 @@ $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $RunDateFolder = Get-Date -Format "yyyy-MM-dd"
 
 # Temporary paths. These are reassigned to the final customer/day/run folder after tenant branding.
-$CsvPath  = Join-Path $BaseOutputFolder "Intune-WindowsDevices-$Timestamp.csv"
-$JsonPath = Join-Path $BaseOutputFolder "Intune-WindowsDevices-$Timestamp.json"
+$CsvPath  = Join-Path $BaseOutputFolder "Intune-Devices-$Timestamp.csv"
+$JsonPath = Join-Path $BaseOutputFolder "Intune-Devices-$Timestamp.json"
 $HtmlPath = Join-Path $BaseOutputFolder "Intune-Dashboard-$Timestamp.html"
 $PrimaryUserRawPath = Join-Path $BaseOutputFolder "Intune-PrimaryUsers-Raw-$Timestamp.json"
 $PrimaryUserAccountRawPath = Join-Path $BaseOutputFolder "Intune-PrimaryUser-AccountStatus-Raw-$Timestamp.json"
 $VIPDeviceGroupMembershipRawPath = Join-Path $BaseOutputFolder "Entra-VIPDeviceGroupMembership-Raw-$Timestamp.json"
 $SecureBootRawPath = Join-Path $BaseOutputFolder "Intune-SecureBoot-Simple-Raw-$Timestamp.json"
+$LenovoSecureBootRemediationRawPath = Join-Path $BaseOutputFolder "Intune-LenovoSecureBoot-Remediation-Raw-$Timestamp.json"
 $BitLockerRawPath = Join-Path $BaseOutputFolder "Intune-BitLocker-Remediation-Raw-$Timestamp.json"
 $DeviceEncryptionRawPath = Join-Path $BaseOutputFolder "Intune-DeviceEncryption-Report-Raw-$Timestamp.json"
 $DefenderRawPath = Join-Path $BaseOutputFolder "Intune-Defender-WindowsProtectionState-Raw-$Timestamp.json"
@@ -138,7 +144,7 @@ $DellSecureBootBiosRawPath = Join-Path $BaseOutputFolder "Dell-SecureBoot2023-BI
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " Intune Windows Dashboard Export" -ForegroundColor Cyan
+Write-Host " Intune Device Dashboard Export" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "Output root:   $BaseOutputFolder"
 Write-Host ""
@@ -1198,6 +1204,225 @@ function Get-IntuneRemediationByName {
     }
 }
 
+
+function Get-BestRemediationOutput {
+    param(
+        [Parameter(Mandatory)]
+        $RunState
+    )
+
+    $Candidates = @(
+        "remediationScriptError",
+        "remediationScriptErrorDetails",
+        "errorMessage",
+        "resultMessage",
+        "remediationScriptOutput",
+        "postRemediationDetectionScriptError",
+        "postRemediationDetectionScriptOutput",
+        "preRemediationDetectionScriptError",
+        "preRemediationDetectionScriptOutput",
+        "detectionScriptOutput",
+        "output"
+    )
+
+    $Parts = @()
+    $FirstField = ""
+    $FirstOutput = ""
+
+    foreach ($Candidate in $Candidates) {
+        $Value = Get-PropertyValue -Object $RunState -PropertyNames @($Candidate)
+
+        if (-not [string]::IsNullOrWhiteSpace($Value)) {
+            if ([string]::IsNullOrWhiteSpace($FirstField)) {
+                $FirstField = $Candidate
+                $FirstOutput = $Value
+            }
+
+            $Parts += ("{0}: {1}" -f $Candidate, $Value)
+        }
+    }
+
+    return [pscustomobject]@{
+        OutputField    = $FirstField
+        Output         = $FirstOutput
+        CombinedOutput = ($Parts -join "`n---`n")
+    }
+}
+
+function ConvertTo-SecureBootRemediationSummary {
+    param(
+        [string]$Output,
+        [string]$DetectionState,
+        [string]$RemediationState
+    )
+
+    $Text = Normalize-Value $Output
+    $Detection = (Normalize-Value $DetectionState).ToLowerInvariant()
+    $Remediation = (Normalize-Value $RemediationState).ToLowerInvariant()
+
+    if ($Text -match '(?i)BIOS\s+Supervisor\s+password\s+appears\s+to\s+be\s+set|no\s+password\s+was\s+provided|supervisor\s+password.*required|password\s+is\s+required') {
+        return [pscustomobject]@{
+            Status      = "Password required"
+            Category    = "passwordRequired"
+            ErrorSummary = "BIOS Supervisor password is set but no password was provided. Secure Boot cannot be enabled remotely until the BIOS password is supplied or handled."
+        }
+    }
+
+    if ($Text -match '(?i)Stop-WithError|WriteErrorException|FullyQualifiedErrorId|failed|error|exception' -or $Remediation -match 'fail|error') {
+        return [pscustomobject]@{
+            Status      = "Failed"
+            Category    = "failed"
+            ErrorSummary = "Remediation failed. Review the raw remediation output for the exact error."
+        }
+    }
+
+    if ($Text -match '(?i)secure\s*boot.*enabled|enabled\s+secure\s*boot|secure\s*boot\s+is\s+already\s+enabled') {
+        return [pscustomobject]@{
+            Status      = "Enabled / no action needed"
+            Category    = "success"
+            ErrorSummary = "Secure Boot is already enabled or was enabled successfully."
+        }
+    }
+
+    if ($Remediation -match 'success|succeeded|completed' -or $Detection -match 'success|succeeded|notapplicable|withoutissues') {
+        return [pscustomobject]@{
+            Status      = "Succeeded"
+            Category    = "success"
+            ErrorSummary = "Remediation reported success."
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Text) -and [string]::IsNullOrWhiteSpace($DetectionState) -and [string]::IsNullOrWhiteSpace($RemediationState)) {
+        return [pscustomobject]@{
+            Status      = "No remediation result"
+            Category    = "missing"
+            ErrorSummary = "No Lenovo Secure Boot remediation run state was found for this device."
+        }
+    }
+
+    return [pscustomobject]@{
+        Status      = "Review"
+        Category    = "review"
+        ErrorSummary = "Remediation result was found but could not be classified automatically."
+    }
+}
+
+function Get-SecureBootRemediationResults {
+    param(
+        [Parameter(Mandatory)]
+        [string]$RemediationName,
+
+        [int]$Top = 50,
+
+        [int]$MaxRunStates = 5000,
+
+        [string]$RawExportPath
+    )
+
+    $ResultsByDeviceId = @{}
+    $ResultsByDeviceName = @{}
+
+    $Remediation = Get-IntuneRemediationByName -DisplayName $RemediationName
+
+    if (-not $Remediation) {
+        return [pscustomobject]@{
+            ByDeviceId   = $ResultsByDeviceId
+            ByDeviceName = $ResultsByDeviceName
+            Count        = 0
+        }
+    }
+
+    $RemediationId = $Remediation.id
+
+    Write-Host ""
+    Write-Host "Retrieving Lenovo Secure Boot remediation device run states..." -ForegroundColor Cyan
+
+    $Uri = "https://graph.microsoft.com/beta/deviceManagement/deviceHealthScripts/$RemediationId/deviceRunStates?`$top=$Top"
+    $SafeResult = Invoke-GraphGetAllSafe -Uri $Uri -MaxItems $MaxRunStates
+    $RunStates = @($SafeResult["Results"])
+
+    if (-not [string]::IsNullOrWhiteSpace($SafeResult["FailedUri"])) {
+        Write-Host "Stopped after failed page:" -ForegroundColor Yellow
+        Write-Host $SafeResult["FailedUri"] -ForegroundColor Yellow
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RawExportPath)) {
+        try {
+            $RunStates | ConvertTo-Json -Depth 30 | Out-File -FilePath $RawExportPath -Encoding UTF8
+            Write-Host "Raw Lenovo Secure Boot remediation run states exported: $RawExportPath" -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Could not export raw Lenovo Secure Boot remediation run states."
+        }
+    }
+
+    foreach ($RunState in $RunStates) {
+        $OutputInfo = Get-BestRemediationOutput -RunState $RunState
+        $RunStateId = Get-PropertyValue -Object $RunState -PropertyNames @("id")
+        $DetectionState = Get-PropertyValue -Object $RunState -PropertyNames @("detectionState")
+        $RemediationState = Get-PropertyValue -Object $RunState -PropertyNames @("remediationState")
+        $Summary = ConvertTo-SecureBootRemediationSummary -Output $OutputInfo.CombinedOutput -DetectionState $DetectionState -RemediationState $RemediationState
+
+        $ManagedDeviceId = Get-PropertyValue -Object $RunState -PropertyNames @(
+            "managedDeviceId",
+            "managedDeviceID",
+            "managedDeviceIdString",
+            "deviceId",
+            "deviceID"
+        )
+
+        if ([string]::IsNullOrWhiteSpace($ManagedDeviceId)) {
+            $ManagedDeviceId = Get-ManagedDeviceIdFromRunStateId -RunStateId $RunStateId -ScriptId $RemediationId
+        }
+
+        $DeviceName = Get-PropertyValue -Object $RunState -PropertyNames @(
+            "deviceName",
+            "managedDeviceName",
+            "deviceDisplayName",
+            "managedDeviceDeviceName"
+        )
+
+        if ([string]::IsNullOrWhiteSpace($DeviceName) -and -not [string]::IsNullOrWhiteSpace($OutputInfo.CombinedOutput)) {
+            if ($OutputInfo.CombinedOutput -match '(?i)(DeviceName|ComputerName|Hostname)\s*[=:]\s*([^|\r\n]+)') {
+                $DeviceName = Normalize-Value $Matches[2]
+            }
+        }
+
+        $Record = [pscustomobject]@{
+            DeviceName              = $DeviceName
+            IntuneDeviceId          = $ManagedDeviceId
+            RunStateId              = $RunStateId
+            LastRunDateTime         = Get-PropertyValue -Object $RunState -PropertyNames @("lastStateUpdateDateTime","lastSyncDateTime")
+            DetectionState          = $DetectionState
+            RemediationState        = $RemediationState
+            OutputField             = $OutputInfo.OutputField
+            Status                  = $Summary.Status
+            Category                = $Summary.Category
+            ErrorSummary            = $Summary.ErrorSummary
+            ErrorDetail             = $OutputInfo.CombinedOutput
+            RawOutput               = $OutputInfo.Output
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($ManagedDeviceId)) {
+            $ResultsByDeviceId[$ManagedDeviceId.ToLowerInvariant()] = $Record
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($DeviceName)) {
+            $ResultsByDeviceName[$DeviceName.ToLowerInvariant()] = $Record
+        }
+    }
+
+    Write-Host "Lenovo Secure Boot remediation run states retrieved: $($RunStates.Count)" -ForegroundColor Green
+    Write-Host "Lenovo Secure Boot remediation mapped by device id: $($ResultsByDeviceId.Count)" -ForegroundColor Green
+    Write-Host "Lenovo Secure Boot remediation mapped by device name: $($ResultsByDeviceName.Count)" -ForegroundColor Green
+
+    return [pscustomobject]@{
+        ByDeviceId   = $ResultsByDeviceId
+        ByDeviceName = $ResultsByDeviceName
+        Count        = $RunStates.Count
+    }
+}
+
 function Get-BitLockerRemediationResults {
     param(
         [Parameter(Mandatory)]
@@ -1687,7 +1912,7 @@ function Get-TenantBrandingLogo {
     Write-Host ""
     Write-Host "Retrieving tenant logo from Entra Company Branding..." -ForegroundColor Cyan
 
-    $TenantDisplayName = "Intune Windows Dashboard"
+    $TenantDisplayName = "Intune Device Dashboard"
     $LogoDataUri = ""
 
     try {
@@ -3844,13 +4069,14 @@ foreach ($Folder in @($CustomerOutputFolder, $DayOutputFolder, $OutputFolder)) {
     }
 }
 
-$CsvPath  = Join-Path $OutputFolder "Intune-WindowsDevices-$Timestamp.csv"
-$JsonPath = Join-Path $OutputFolder "Intune-WindowsDevices-$Timestamp.json"
+$CsvPath  = Join-Path $OutputFolder "Intune-Devices-$Timestamp.csv"
+$JsonPath = Join-Path $OutputFolder "Intune-Devices-$Timestamp.json"
 $HtmlPath = Join-Path $OutputFolder "Intune-Dashboard-$Timestamp.html"
 $PrimaryUserRawPath = Join-Path $OutputFolder "Intune-PrimaryUsers-Raw-$Timestamp.json"
 $PrimaryUserAccountRawPath = Join-Path $OutputFolder "Intune-PrimaryUser-AccountStatus-Raw-$Timestamp.json"
 $VIPDeviceGroupMembershipRawPath = Join-Path $OutputFolder "Entra-VIPDeviceGroupMembership-Raw-$Timestamp.json"
 $SecureBootRawPath = Join-Path $OutputFolder "Intune-SecureBoot-Simple-Raw-$Timestamp.json"
+$LenovoSecureBootRemediationRawPath = Join-Path $OutputFolder "Intune-LenovoSecureBoot-Remediation-Raw-$Timestamp.json"
 $BitLockerRawPath = Join-Path $OutputFolder "Intune-BitLocker-Remediation-Raw-$Timestamp.json"
 $DeviceEncryptionRawPath = Join-Path $OutputFolder "Intune-DeviceEncryption-Report-Raw-$Timestamp.json"
 $DefenderRawPath = Join-Path $OutputFolder "Intune-Defender-WindowsProtectionState-Raw-$Timestamp.json"
@@ -3868,11 +4094,11 @@ Write-Host "Run:      $RunFolderName"
 Write-Host "Output:   $OutputFolder" -ForegroundColor Green
 
 # ============================================================
-# Retrieve Intune Windows managed devices
+# Retrieve Intune managed devices - Windows, macOS, and Android
 # ============================================================
 
 Write-Host ""
-Write-Host "Retrieving Windows managed devices from Intune..." -ForegroundColor Cyan
+Write-Host "Retrieving Windows, macOS, and Android managed devices from Intune..." -ForegroundColor Cyan
 
 $ManagedDeviceSelect = @(
     "id",
@@ -3897,9 +4123,20 @@ $ManagedDeviceSelect = @(
     "freeStorageSpaceInBytes"
 ) -join ","
 
-$ManagedDevicesUri = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?`$filter=operatingSystem%20eq%20'Windows'&`$select=$ManagedDeviceSelect&`$top=100"
-$ManagedDevices = Invoke-GraphGetAll -Uri $ManagedDevicesUri
-Write-Host "Windows managed devices found: $($ManagedDevices.Count)" -ForegroundColor Green
+$WindowsManagedDevicesUri = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?`$filter=operatingSystem%20eq%20'Windows'&`$select=$ManagedDeviceSelect&`$top=100"
+$MacOSManagedDevicesUri   = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?`$filter=operatingSystem%20eq%20'macOS'&`$select=$ManagedDeviceSelect&`$top=100"
+$AndroidManagedDevicesUri = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?`$filter=operatingSystem%20eq%20'Android'&`$select=$ManagedDeviceSelect&`$top=100"
+
+$WindowsManagedDevices = @(Invoke-GraphGetAll -Uri $WindowsManagedDevicesUri)
+$MacOSManagedDevices   = @(Invoke-GraphGetAll -Uri $MacOSManagedDevicesUri -AllowFailure)
+$AndroidManagedDevices = @(Invoke-GraphGetAll -Uri $AndroidManagedDevicesUri -AllowFailure)
+
+$ManagedDevices = @($WindowsManagedDevices + $MacOSManagedDevices + $AndroidManagedDevices)
+
+Write-Host "Windows managed devices found: $($WindowsManagedDevices.Count)" -ForegroundColor Green
+Write-Host "macOS managed devices found:   $($MacOSManagedDevices.Count)" -ForegroundColor Green
+Write-Host "Android managed devices found: $($AndroidManagedDevices.Count)" -ForegroundColor Green
+Write-Host "Total managed devices found:   $($ManagedDevices.Count)" -ForegroundColor Green
 
 # ============================================================
 # Retrieve VIP device group membership
@@ -4030,12 +4267,30 @@ catch {
 
 
 
+
+# ============================================================
+# Retrieve Lenovo Secure Boot remediation output
+# ============================================================
+
+Write-Host ""
+Write-Host "Retrieving Lenovo Secure Boot remediation output..." -ForegroundColor Cyan
+
+$LenovoSecureBootRemediationResults = Get-SecureBootRemediationResults `
+    -RemediationName $LenovoSecureBootRemediationName `
+    -MaxRunStates $MaxSecureBootRunStates `
+    -RawExportPath $LenovoSecureBootRemediationRawPath
+
+$LenovoSecureBootRemediationByDeviceId = $LenovoSecureBootRemediationResults.ByDeviceId
+$LenovoSecureBootRemediationByDeviceName = $LenovoSecureBootRemediationResults.ByDeviceName
+
+Write-Host "Lenovo Secure Boot remediation run states imported: $($LenovoSecureBootRemediationResults.Count)" -ForegroundColor Green
+
 # ============================================================
 # Retrieve Defender deployment/protection state
 # ============================================================
 
 Write-Host ""
-$DefenderResults = Get-DefenderWindowsProtectionStates -ManagedDevices $ManagedDevices -MaxDetailQueries $MaxDefenderDetailQueries -RawExportPath $DefenderRawPath
+$DefenderResults = Get-DefenderWindowsProtectionStates -ManagedDevices $WindowsManagedDevices -MaxDetailQueries $MaxDefenderDetailQueries -RawExportPath $DefenderRawPath
 $DefenderByDeviceId = $DefenderResults.ByManagedDeviceId
 $DefenderByDeviceName = $DefenderResults.ByDeviceName
 $DefenderByAzureADDeviceId = $DefenderResults.ByAzureADDeviceId
@@ -4158,8 +4413,24 @@ $Rows = foreach ($Device in $ManagedDevices) {
     $DeviceIdKey = $DeviceId.ToLowerInvariant()
     $AzureADDeviceId = Normalize-Value $Device.azureADDeviceId
     $AzureADDeviceIdKey = $AzureADDeviceId.ToLowerInvariant()
+    $OperatingSystem = Normalize-Value $Device.operatingSystem
+    $OperatingSystemLower = $OperatingSystem.ToLowerInvariant()
+    $IsWindowsDevice = ($OperatingSystemLower -eq "windows")
 
     $OSInfo = Get-OSBuildInfo -OSVersion $Device.osVersion
+
+    if (-not $IsWindowsDevice) {
+        $NonWindowsFriendlyVersion = $OperatingSystem
+        if ([string]::IsNullOrWhiteSpace($NonWindowsFriendlyVersion)) { $NonWindowsFriendlyVersion = "Non-Windows" }
+
+        $OSInfo = [pscustomobject]@{
+            Build           = $null
+            UBR             = $null
+            FriendlyVersion = $NonWindowsFriendlyVersion
+            VersionStatus   = "Not applicable"
+            UBRStatus       = "Not applicable"
+        }
+    }
 
     $PrimaryUserRecord = $null
 
@@ -4180,6 +4451,15 @@ $Rows = foreach ($Device in $ManagedDevices) {
     }
     elseif (-not [string]::IsNullOrWhiteSpace($DeviceKey) -and $SecureBootByDeviceName.ContainsKey($DeviceKey)) {
         $SecureBootRecord = $SecureBootByDeviceName[$DeviceKey]
+    }
+
+    $LenovoSecureBootRemediationRecord = $null
+
+    if (-not [string]::IsNullOrWhiteSpace($DeviceIdKey) -and $LenovoSecureBootRemediationByDeviceId.ContainsKey($DeviceIdKey)) {
+        $LenovoSecureBootRemediationRecord = $LenovoSecureBootRemediationByDeviceId[$DeviceIdKey]
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($DeviceKey) -and $LenovoSecureBootRemediationByDeviceName.ContainsKey($DeviceKey)) {
+        $LenovoSecureBootRemediationRecord = $LenovoSecureBootRemediationByDeviceName[$DeviceKey]
     }
 
     $DefenderRecord = $null
@@ -4275,6 +4555,14 @@ $Rows = foreach ($Device in $ManagedDevices) {
     $SecureBootStatus = "Unknown"
     $SecureBootRaw = ""
     $SecureBootSource = ""
+    $LenovoSecureBootRemediationStatus = "No remediation result"
+    $LenovoSecureBootRemediationCategory = "missing"
+    $LenovoSecureBootRemediationLastRun = ""
+    $LenovoSecureBootRemediationDetectionState = ""
+    $LenovoSecureBootRemediationState = ""
+    $LenovoSecureBootRemediationErrorSummary = ""
+    $LenovoSecureBootRemediationErrorDetail = ""
+    $LenovoSecureBootRemediationOutputField = ""
 
     $DefenderStatus = "Unknown"
     $DefenderStatusCategory = "unknown"
@@ -4375,6 +4663,17 @@ $Rows = foreach ($Device in $ManagedDevices) {
         $SecureBootSource = Normalize-Value $SecureBootRecord.SecureBootSource
     }
 
+    if ($LenovoSecureBootRemediationRecord) {
+        $LenovoSecureBootRemediationStatus = Use-ValueOrUnknown $LenovoSecureBootRemediationRecord.Status "Review"
+        $LenovoSecureBootRemediationCategory = Use-ValueOrUnknown $LenovoSecureBootRemediationRecord.Category "review"
+        $LenovoSecureBootRemediationLastRun = Normalize-Value $LenovoSecureBootRemediationRecord.LastRunDateTime
+        $LenovoSecureBootRemediationDetectionState = Normalize-Value $LenovoSecureBootRemediationRecord.DetectionState
+        $LenovoSecureBootRemediationState = Normalize-Value $LenovoSecureBootRemediationRecord.RemediationState
+        $LenovoSecureBootRemediationErrorSummary = Normalize-Value $LenovoSecureBootRemediationRecord.ErrorSummary
+        $LenovoSecureBootRemediationErrorDetail = Normalize-Value $LenovoSecureBootRemediationRecord.ErrorDetail
+        $LenovoSecureBootRemediationOutputField = Normalize-Value $LenovoSecureBootRemediationRecord.OutputField
+    }
+
     if ($DefenderRecord) {
         $DefenderStatus = Use-ValueOrUnknown $DefenderRecord.DefenderStatus
         $DefenderStatusCategory = Use-ValueOrUnknown $DefenderRecord.DefenderStatusCategory "unknown"
@@ -4428,45 +4727,71 @@ $Rows = foreach ($Device in $ManagedDevices) {
         $TpmReady = Normalize-Value $FirmwareRecord.TpmReady
     }
 
-    $LenovoManufacturerText = ((Normalize-Value $Device.manufacturer) + " " + (Normalize-Value $FirmwareManufacturer)).ToLowerInvariant()
-
-    if ($LenovoManufacturerText -match 'lenovo') {
-        $LenovoSB2023Result = Get-LenovoSecureBoot2023Readiness `
-            -DeviceModel (Normalize-Value $Device.model) `
-            -DeviceSKU $DeviceSKU `
-            -SystemBoardModel $SystemBoardModel `
-            -FirmwareVersion $FirmwareVersion `
-            -Requirements $LenovoSecureBoot2023BiosRequirements `
-            -AdditionalValues @(
-                # Keep only fields that can realistically contain Lenovo machine-type/model data.
-                # Do not use serial number, TPM version, or random device name characters for prefix detection.
-                (Normalize-Value $Device.manufacturer),
-                $FirmwareManufacturer,
-                $FirmwareVersion
-            )
+    if (-not $IsWindowsDevice) {
+        $SecureBootStatus = "Not applicable"
+        $SecureBootSource = "Non-Windows device"
+        $LenovoSecureBootRemediationStatus = "Not applicable"
+        $LenovoSecureBootRemediationCategory = "notApplicable"
+        $DefenderStatus = "Not applicable"
+        $DefenderStatusCategory = "notApplicable"
+        $RebootPending = "Not applicable"
+        $RebootPendingSource = "Non-Windows device"
+        $BitLockerStatus = "Not applicable"
+        $BitLockerStatusCategory = "notApplicable"
+        $BitLockerSource = "Non-Windows device"
+        $LenovoSB2023Readiness = "Not applicable"
+        $LenovoSB2023Category = "notApplicable"
+        $DellSB2023Readiness = "Not applicable"
+        $DellSB2023Category = "notApplicable"
+        $HPSB2023Readiness = "Not applicable"
+        $HPSB2023Category = "notApplicable"
+        $AutopilotEnrolled = "Not applicable"
+        $EnrollmentQuality = "Not applicable"
+        $EnrollmentQualityCategory = "notApplicable"
     }
-    else {
-        $LenovoSB2023Result = [pscustomobject]@{
-            Status        = "Not Lenovo"
-            Category      = "notLenovo"
-            ModelPrefix   = ""
-            Product       = ""
-            RequiredBios  = ""
-            CurrentBios   = Normalize-Value $FirmwareVersion
-            CompareMethod = "Manufacturer"
-            CompareDetail = "Device manufacturer is not Lenovo."
+
+    if ($IsWindowsDevice) {
+        $LenovoManufacturerText = ((Normalize-Value $Device.manufacturer) + " " + (Normalize-Value $FirmwareManufacturer)).ToLowerInvariant()
+
+        if ($LenovoManufacturerText -match 'lenovo') {
+            $LenovoSB2023Result = Get-LenovoSecureBoot2023Readiness `
+                -DeviceModel (Normalize-Value $Device.model) `
+                -DeviceSKU $DeviceSKU `
+                -SystemBoardModel $SystemBoardModel `
+                -FirmwareVersion $FirmwareVersion `
+                -Requirements $LenovoSecureBoot2023BiosRequirements `
+                -AdditionalValues @(
+                    # Keep only fields that can realistically contain Lenovo machine-type/model data.
+                    # Do not use serial number, TPM version, or random device name characters for prefix detection.
+                    (Normalize-Value $Device.manufacturer),
+                    $FirmwareManufacturer,
+                    $FirmwareVersion
+                )
         }
+        else {
+            $LenovoSB2023Result = [pscustomobject]@{
+                Status        = "Not Lenovo"
+                Category      = "notLenovo"
+                ModelPrefix   = ""
+                Product       = ""
+                RequiredBios  = ""
+                CurrentBios   = Normalize-Value $FirmwareVersion
+                CompareMethod = "Manufacturer"
+                CompareDetail = "Device manufacturer is not Lenovo."
+            }
+        }
+
+        $LenovoSB2023Readiness = Normalize-Value $LenovoSB2023Result.Status
+        $LenovoSB2023Category = Normalize-Value $LenovoSB2023Result.Category
+        $LenovoSB2023Product = Normalize-Value $LenovoSB2023Result.Product
+        $LenovoSB2023ModelPrefix = Normalize-Value $LenovoSB2023Result.ModelPrefix
+        $LenovoSB2023RequiredBios = Normalize-Value $LenovoSB2023Result.RequiredBios
+        $LenovoSB2023CurrentBios = Normalize-Value $LenovoSB2023Result.CurrentBios
+        $LenovoSB2023CompareMethod = Normalize-Value $LenovoSB2023Result.CompareMethod
+        $LenovoSB2023CompareDetail = Normalize-Value $LenovoSB2023Result.CompareDetail
     }
 
-    $LenovoSB2023Readiness = Normalize-Value $LenovoSB2023Result.Status
-    $LenovoSB2023Category = Normalize-Value $LenovoSB2023Result.Category
-    $LenovoSB2023Product = Normalize-Value $LenovoSB2023Result.Product
-    $LenovoSB2023ModelPrefix = Normalize-Value $LenovoSB2023Result.ModelPrefix
-    $LenovoSB2023RequiredBios = Normalize-Value $LenovoSB2023Result.RequiredBios
-    $LenovoSB2023CurrentBios = Normalize-Value $LenovoSB2023Result.CurrentBios
-    $LenovoSB2023CompareMethod = Normalize-Value $LenovoSB2023Result.CompareMethod
-    $LenovoSB2023CompareDetail = Normalize-Value $LenovoSB2023Result.CompareDetail
-
+    if ($IsWindowsDevice) {
     $DellSB2023Result = Get-DellSecureBoot2023Readiness `
         -Manufacturer (Normalize-Value $Device.manufacturer) `
         -DeviceModel (Normalize-Value $Device.model) `
@@ -4511,7 +4836,9 @@ $Rows = foreach ($Device in $ManagedDevices) {
     $HPSB2023CompareMethod = Normalize-Value $HPSB2023Result.CompareMethod
     $HPSB2023CompareDetail = Normalize-Value $HPSB2023Result.CompareDetail
 
-    if ($AutopilotRecord) {
+    }
+
+    if ($IsWindowsDevice -and $AutopilotRecord) {
         $AutopilotEnrolled = "Yes"
 
         # Profile name can be returned either as a direct property or as the expanded deploymentProfile relationship.
@@ -4557,48 +4884,50 @@ $Rows = foreach ($Device in $ManagedDevices) {
         $EnrollmentAgeDays = $null
     }
 
-    if ($AutopilotEnrolled -eq "Yes" -and (Normalize-Value $Device.managedDeviceOwnerType).ToLowerInvariant() -eq "company") {
-        $EnrollmentQuality = "Good"
-        $EnrollmentQualityCategory = "good"
-    }
-    elseif ((Normalize-Value $Device.managedDeviceOwnerType).ToLowerInvariant() -ne "company") {
-        $EnrollmentQuality = "Review ownership"
-        $EnrollmentQualityCategory = "review"
-    }
-    elseif ($AutopilotEnrolled -eq "No") {
-        $EnrollmentQuality = "Not Autopilot"
-        $EnrollmentQualityCategory = "notAutopilot"
-    }
-    else {
-        $EnrollmentQuality = "Review"
-        $EnrollmentQualityCategory = "review"
-    }
-
-    $EffectiveDiskState = Get-EffectiveDiskState `
-        -DiskEncryptionPercentage $DiskEncryptionPercentage `
-        -VolumeStatus $BitLockerVolumeStatus `
-        -ProtectionStatus $BitLockerProtectionStatus `
-        -ProtectionState $BitLockerProtectionState `
-        -IntuneEncryptionState ""
-
-    $BitLockerStatus = $EffectiveDiskState.State
-    $BitLockerStatusCategory = $EffectiveDiskState.Category
-
-    if ($BitLockerStatusCategory -eq "missing") {
-        $IntuneEncryptionFallback = Get-BitLockerFallbackFromIntuneEncryption -Device $Device -DeviceEncryptionRecord $DeviceEncryptionRecord
-
-        if ($IntuneEncryptionFallback.Category -ne "missing") {
-            $BitLockerStatus = $IntuneEncryptionFallback.State
-            $BitLockerStatusCategory = $IntuneEncryptionFallback.Category
-            $BitLockerSource = $IntuneEncryptionFallback.Source
-            $IntuneDeviceEncryptionRaw = $IntuneEncryptionFallback.Raw
-            $IntuneDeviceEncryptionStatus = $BitLockerStatus
-            $IntuneDeviceEncryptionSource = $IntuneEncryptionFallback.Source
+    if ($IsWindowsDevice) {
+        if ($AutopilotEnrolled -eq "Yes" -and (Normalize-Value $Device.managedDeviceOwnerType).ToLowerInvariant() -eq "company") {
+            $EnrollmentQuality = "Good"
+            $EnrollmentQualityCategory = "good"
+        }
+        elseif ((Normalize-Value $Device.managedDeviceOwnerType).ToLowerInvariant() -ne "company") {
+            $EnrollmentQuality = "Review ownership"
+            $EnrollmentQualityCategory = "review"
+        }
+        elseif ($AutopilotEnrolled -eq "No") {
+            $EnrollmentQuality = "Not Autopilot"
+            $EnrollmentQualityCategory = "notAutopilot"
         }
         else {
-            $BitLockerSource = "No remediation result / no Intune encryption state"
-            $IntuneDeviceEncryptionRaw = $IntuneEncryptionFallback.Raw
-            $IntuneDeviceEncryptionSource = $IntuneEncryptionFallback.Source
+            $EnrollmentQuality = "Review"
+            $EnrollmentQualityCategory = "review"
+        }
+
+        $EffectiveDiskState = Get-EffectiveDiskState `
+            -DiskEncryptionPercentage $DiskEncryptionPercentage `
+            -VolumeStatus $BitLockerVolumeStatus `
+            -ProtectionStatus $BitLockerProtectionStatus `
+            -ProtectionState $BitLockerProtectionState `
+            -IntuneEncryptionState ""
+
+        $BitLockerStatus = $EffectiveDiskState.State
+        $BitLockerStatusCategory = $EffectiveDiskState.Category
+
+        if ($BitLockerStatusCategory -eq "missing") {
+            $IntuneEncryptionFallback = Get-BitLockerFallbackFromIntuneEncryption -Device $Device -DeviceEncryptionRecord $DeviceEncryptionRecord
+
+            if ($IntuneEncryptionFallback.Category -ne "missing") {
+                $BitLockerStatus = $IntuneEncryptionFallback.State
+                $BitLockerStatusCategory = $IntuneEncryptionFallback.Category
+                $BitLockerSource = $IntuneEncryptionFallback.Source
+                $IntuneDeviceEncryptionRaw = $IntuneEncryptionFallback.Raw
+                $IntuneDeviceEncryptionStatus = $BitLockerStatus
+                $IntuneDeviceEncryptionSource = $IntuneEncryptionFallback.Source
+            }
+            else {
+                $BitLockerSource = "No remediation result / no Intune encryption state"
+                $IntuneDeviceEncryptionRaw = $IntuneEncryptionFallback.Raw
+                $IntuneDeviceEncryptionSource = $IntuneEncryptionFallback.Source
+            }
         }
     }
 
@@ -4637,6 +4966,7 @@ $Rows = foreach ($Device in $ManagedDevices) {
 
     [pscustomobject]@{
         DeviceName                      = $DeviceName
+        IsWindowsDevice                 = $IsWindowsDevice
         DevicePriority                  = $DevicePriority
         DevicePriorityCategory          = $DevicePriorityCategory
         VIPGroupName                    = $VIPGroupName
@@ -4657,6 +4987,14 @@ $Rows = foreach ($Device in $ManagedDevices) {
         SecureBootStatus                = $SecureBootStatus
         SecureBootRaw                   = $SecureBootRaw
         SecureBootSource                = $SecureBootSource
+        LenovoSecureBootRemediationStatus         = $LenovoSecureBootRemediationStatus
+        LenovoSecureBootRemediationCategory       = $LenovoSecureBootRemediationCategory
+        LenovoSecureBootRemediationLastRun        = $LenovoSecureBootRemediationLastRun
+        LenovoSecureBootRemediationDetectionState = $LenovoSecureBootRemediationDetectionState
+        LenovoSecureBootRemediationState          = $LenovoSecureBootRemediationState
+        LenovoSecureBootRemediationErrorSummary   = $LenovoSecureBootRemediationErrorSummary
+        LenovoSecureBootRemediationErrorDetail    = $LenovoSecureBootRemediationErrorDetail
+        LenovoSecureBootRemediationOutputField    = $LenovoSecureBootRemediationOutputField
 
         DefenderStatus                  = $DefenderStatus
         DefenderStatusCategory          = $DefenderStatusCategory
@@ -4742,7 +5080,7 @@ $Rows = foreach ($Device in $ManagedDevices) {
 
         ComplianceState                 = Normalize-Value $Device.complianceState
 
-        OperatingSystem                 = Normalize-Value $Device.operatingSystem
+        OperatingSystem                 = $OperatingSystem
         OSVersion                       = Normalize-Value $Device.osVersion
         OSFriendlyVersion               = $OSInfo.FriendlyVersion
         OSBuild                         = $OSInfo.Build
@@ -4908,7 +5246,16 @@ foreach ($Row in $Rows) {
         $RiskScore += 25
         $RiskReasons += "Secure Boot disabled"
     }
-    elseif ((Normalize-Value $Row.SecureBootStatus).ToLowerInvariant() -notin @("enabled", "disabled")) {
+
+    if ($LenovoSecureBootRemediationCategory -eq "passwordRequired") {
+        $RiskScore += 20
+        $RiskReasons += "Lenovo Secure Boot remediation requires BIOS Supervisor password"
+    }
+    elseif ($LenovoSecureBootRemediationCategory -eq "failed") {
+        $RiskScore += 15
+        $RiskReasons += "Lenovo Secure Boot remediation failed"
+    }
+    elseif ((Normalize-Value $Row.SecureBootStatus).ToLowerInvariant() -notin @("enabled", "disabled", "not applicable")) {
         $RiskScore += 5
         $RiskReasons += "Secure Boot unknown"
     }
@@ -5088,6 +5435,14 @@ Write-Host "Secure Boot enabled: $RowsWithSecureBootEnabled" -ForegroundColor Gr
 Write-Host "Secure Boot disabled: $RowsWithSecureBootDisabled" -ForegroundColor Yellow
 Write-Host "Secure Boot unknown/other: $RowsWithSecureBootUnknown" -ForegroundColor Yellow
 
+$RowsWithLenovoSecureBootPasswordRequired = @($Rows | Where-Object { $_.LenovoSecureBootRemediationCategory -eq "passwordRequired" }).Count
+$RowsWithLenovoSecureBootRemediationFailed = @($Rows | Where-Object { $_.LenovoSecureBootRemediationCategory -eq "failed" }).Count
+$RowsWithLenovoSecureBootRemediationSuccess = @($Rows | Where-Object { $_.LenovoSecureBootRemediationCategory -eq "success" }).Count
+
+Write-Host "Lenovo Secure Boot remediation password required: $RowsWithLenovoSecureBootPasswordRequired" -ForegroundColor Yellow
+Write-Host "Lenovo Secure Boot remediation failed: $RowsWithLenovoSecureBootRemediationFailed" -ForegroundColor Red
+Write-Host "Lenovo Secure Boot remediation success: $RowsWithLenovoSecureBootRemediationSuccess" -ForegroundColor Green
+
 $RowsWithDefenderDeployed = @($Rows | Where-Object { $_.DefenderStatusCategory -eq "deployed" }).Count
 $RowsWithDefenderAttention = @($Rows | Where-Object { $_.DefenderStatusCategory -eq "attention" }).Count
 $RowsWithDefenderNotDeployed = @($Rows | Where-Object { $_.DefenderStatusCategory -eq "notDeployed" }).Count
@@ -5125,6 +5480,9 @@ $GeneratedOn = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $DashboardDataJson = @($Rows) | ConvertTo-Json -Depth 20 -Compress
 $DashboardDataBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($DashboardDataJson))
 $TotalDevices = $Rows.Count
+$TotalWindowsDevices = @($Rows | Where-Object { (Normalize-Value $_.OperatingSystem).ToLowerInvariant() -eq "windows" }).Count
+$TotalMacOSDevices = @($Rows | Where-Object { (Normalize-Value $_.OperatingSystem).ToLowerInvariant() -eq "macos" }).Count
+$TotalAndroidDevices = @($Rows | Where-Object { (Normalize-Value $_.OperatingSystem).ToLowerInvariant() -eq "android" }).Count
 $SafeTenantName = ConvertTo-HtmlSafe $TenantDisplayName
 
 # ============================================================
@@ -5136,7 +5494,7 @@ $Html = @"
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Intune Windows Dashboard</title>
+<title>Intune Device Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
     :root {
@@ -5501,7 +5859,7 @@ $Html = @"
         <div class="brand-left">
             $LogoHtml
             <div>
-                <h1>🖥️ Intune Windows Dashboard</h1>
+                <h1>🖥️ Intune Device Dashboard</h1>
                 <div class="subtitle">$SafeTenantName</div>
             </div>
         </div>
@@ -5555,6 +5913,12 @@ $Html = @"
             <div class="card-title">🛡️ Secure Boot Enabled</div>
             <div class="card-value good" id="cardSecureBootEnabled">0</div>
             <div class="card-note" id="cardSecureBootEnabledNote">0% of filtered devices</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">🔑 Lenovo SB Password Required</div>
+            <div class="card-value bad" id="cardLenovoSBPasswordRequired">0</div>
+            <div class="card-note" id="cardLenovoSBPasswordRequiredNote">0% of filtered devices</div>
         </div>
 
         <div class="card">
@@ -5862,6 +6226,17 @@ $Html = @"
                 </div>
             </details>
 
+            <details class="check-filter" id="lenovoSecureBootRemediationFilterMenu">
+                <summary><span id="lenovoSecureBootRemediationFilterSummary">All Lenovo SB remediation results</span></summary>
+                <div class="check-filter-panel">
+                    <label><input type="checkbox" name="lenovoSecureBootRemediationFilter" value="passwordRequired" data-label="Password required" onchange="onCheckboxFilterChanged()"> Password required</label>
+                    <label><input type="checkbox" name="lenovoSecureBootRemediationFilter" value="failed" data-label="Failed" onchange="onCheckboxFilterChanged()"> Failed</label>
+                    <label><input type="checkbox" name="lenovoSecureBootRemediationFilter" value="success" data-label="Succeeded" onchange="onCheckboxFilterChanged()"> Succeeded</label>
+                    <label><input type="checkbox" name="lenovoSecureBootRemediationFilter" value="review" data-label="Review" onchange="onCheckboxFilterChanged()"> Review</label>
+                    <label><input type="checkbox" name="lenovoSecureBootRemediationFilter" value="missing" data-label="No remediation result" onchange="onCheckboxFilterChanged()"> No remediation result</label>
+                </div>
+            </details>
+
             <details class="check-filter" id="defenderFilterMenu">
                 <summary><span id="defenderFilterSummary">All Defender states</span></summary>
                 <div class="check-filter-panel">
@@ -5952,6 +6327,8 @@ $Html = @"
                         <th>🚦 Primary User Status</th>
                         <th>✉️ Email</th>
                         <th>🛡️ Secure Boot</th>
+                        <th>🔧 Lenovo SB Remediation</th>
+                        <th>🧾 SB Remediation Error</th>
                         <th>🔁 Reboot</th>
                         <th>🛡️ Defender</th>
                         <th>⚡ Real-Time</th>
@@ -6019,7 +6396,7 @@ $Html = @"
 </aside>
 
 <footer>
-    Primary user status comes from Entra ID accountEnabled. Secure Boot status comes from Intune device health attestation when available. BitLocker status comes from the remediation output named DaaS - Detection - Bitlocker - Get status.
+    Primary user status comes from Entra ID accountEnabled. Windows-only signals such as Secure Boot, Lenovo Secure Boot remediation, Defender, BitLocker, firmware, BIOS readiness, and Autopilot are shown as not applicable for macOS and Android devices.
 </footer>
 
 <script>
@@ -6090,6 +6467,14 @@ function getPillEmoji(value, type) {
         if (v === "enabled") return "🛡️ ";
         if (v === "disabled") return "⚠️ ";
         return "❔ ";
+    }
+
+    if (type === "lenovosbremediation") {
+        if (v === "password required") return "🔑 ";
+        if (v === "failed") return "🚫 ";
+        if (v === "succeeded" || v === "enabled / no action needed") return "✅ ";
+        if (v === "no remediation result") return "➖ ";
+        return "🧩 ";
     }
 
     if (type === "defender") {
@@ -6194,6 +6579,15 @@ function pill(value, type) {
     if (type === "secureboot") {
         if (clean.toLowerCase() === "enabled") cls += " good";
         else if (clean.toLowerCase() === "disabled") cls += " bad";
+        else cls += " warn";
+    }
+
+    if (type === "lenovosbremediation") {
+        const v = clean.toLowerCase();
+        if (v === "password required") cls += " bad";
+        else if (v === "failed") cls += " bad";
+        else if (v === "succeeded" || v === "enabled / no action needed") cls += " good";
+        else if (v === "no remediation result") cls += "";
         else cls += " warn";
     }
 
@@ -6346,6 +6740,7 @@ function updateFilterSummaries() {
     updateFilterSummary("hpSB2023FilterSummary", "hpSB2023Filter", "All HP SB 2023 states");
     updateFilterSummary("primaryStatusFilterSummary", "primaryStatusFilter", "All primary user states");
     updateFilterSummary("secureBootFilterSummary", "secureBootFilter", "All Secure Boot states");
+    updateFilterSummary("lenovoSecureBootRemediationFilterSummary", "lenovoSecureBootRemediationFilter", "All Lenovo SB remediation results");
     updateFilterSummary("defenderFilterSummary", "defenderFilter", "All Defender states");
     updateFilterSummary("bitLockerFilterSummary", "bitLockerFilter", "All BitLocker states");
     updateFilterSummary("osFilterSummary", "osFilter", "All OS branches");
@@ -6470,6 +6865,7 @@ function clearAllFilters() {
     clearCheckboxGroup("hpSB2023Filter");
     clearCheckboxGroup("primaryStatusFilter");
     clearCheckboxGroup("secureBootFilter");
+    clearCheckboxGroup("lenovoSecureBootRemediationFilter");
     clearCheckboxGroup("defenderFilter");
     clearCheckboxGroup("bitLockerFilter");
     clearCheckboxGroup("osFilter");
@@ -6499,6 +6895,7 @@ function getFilteredDevices() {
     const hpSB2023 = getCheckedValues("hpSB2023Filter");
     const primaryStatus = getCheckedValues("primaryStatusFilter");
     const secureBoot = getCheckedValues("secureBootFilter");
+    const lenovoSecureBootRemediation = getCheckedValues("lenovoSecureBootRemediationFilter");
     const defender = getCheckedValues("defenderFilter");
     const bitLocker = getCheckedValues("bitLockerFilter");
     const os = getCheckedValues("osFilter");
@@ -6606,6 +7003,11 @@ function getFilteredDevices() {
             })) return false;
         }
 
+        if (lenovoSecureBootRemediation.length) {
+            const remediationCategory = String(d.LenovoSecureBootRemediationCategory || "missing");
+            if (!matchesAny(lenovoSecureBootRemediation, function(value) { return remediationCategory === value; })) return false;
+        }
+
         if (defender.length) {
             const defenderCategory = String(d.DefenderStatusCategory || "unknown");
             if (!matchesAny(defender, function(value) {
@@ -6662,6 +7064,10 @@ function getFilteredDevices() {
     });
 }
 
+function isWindowsDevice(d) {
+    return String(d.OperatingSystem || "").toLowerCase() === "windows" || d.IsWindowsDevice === true || String(d.IsWindowsDevice || "").toLowerCase() === "true";
+}
+
 function updateTopIssues(rows) {
     const total = rows.length;
 
@@ -6682,31 +7088,37 @@ function updateTopIssues(rows) {
             icon: "🔁",
             title: "Reboot pending",
             subtitle: "Devices with reboot pending inventory flag",
-            count: rows.filter(function(d) { return String(d.RebootPending || "").toLowerCase() === "yes"; }).length
+            count: rows.filter(function(d) { return isWindowsDevice(d) && String(d.RebootPending || "").toLowerCase() === "yes"; }).length
+        },
+        {
+            icon: "🔑",
+            title: "Lenovo SB password required",
+            subtitle: "BIOS Supervisor password is required before Secure Boot can be enabled remotely",
+            count: rows.filter(function(d) { return isWindowsDevice(d) && String(d.LenovoSecureBootRemediationCategory || "") === "passwordRequired"; }).length
         },
         {
             icon: "🧬",
             title: "Lenovo BIOS update required",
             subtitle: "BIOS below Lenovo minimum for Secure Boot 2023 certificate readiness",
-            count: rows.filter(function(d) { return String(d.LenovoSB2023Category || "") === "update"; }).length
+            count: rows.filter(function(d) { return isWindowsDevice(d) && String(d.LenovoSB2023Category || "") === "update"; }).length
         },
         {
             icon: "🧬",
             title: "Dell BIOS update required",
             subtitle: "BIOS below Dell minimum for Secure Boot 2023 certificate readiness",
-            count: rows.filter(function(d) { return String(d.DellSB2023Category || "") === "update"; }).length
+            count: rows.filter(function(d) { return isWindowsDevice(d) && String(d.DellSB2023Category || "") === "update"; }).length
         },
         {
             icon: "📦",
             title: "Autopilot / enrollment review",
             subtitle: "Not Autopilot or enrollment quality requires review",
-            count: rows.filter(function(d) { return String(d.EnrollmentQualityCategory || "").toLowerCase() !== "good"; }).length
+            count: rows.filter(function(d) { return isWindowsDevice(d) && String(d.EnrollmentQualityCategory || "").toLowerCase() !== "good"; }).length
         },
         {
             icon: "🧬",
             title: "Missing firmware inventory",
             subtitle: "No BIOS / firmware version from remediation inventory",
-            count: rows.filter(function(d) { return !String(d.FirmwareVersion || "").trim(); }).length
+            count: rows.filter(function(d) { return isWindowsDevice(d) && !String(d.FirmwareVersion || "").trim(); }).length
         },
         {
             icon: "🔐",
@@ -6714,7 +7126,7 @@ function updateTopIssues(rows) {
             subtitle: "Not encrypted, suspended, missing result, or needs review",
             count: rows.filter(function(d) {
                 const c = String(d.BitLockerStatusCategory || "");
-                return ["notEncrypted", "decrypting", "encryptedProtectionOff", "suspended", "review", "missing"].includes(c);
+                return isWindowsDevice(d) && ["notEncrypted", "decrypting", "encryptedProtectionOff", "suspended", "review", "missing"].includes(c);
             }).length
         },
         {
@@ -6723,7 +7135,7 @@ function updateTopIssues(rows) {
             subtitle: "Defender not reporting as deployed or needs attention",
             count: rows.filter(function(d) {
                 const c = String(d.DefenderStatusCategory || "");
-                return c === "notDeployed" || c === "attention" || c === "unknown";
+                return isWindowsDevice(d) && (c === "notDeployed" || c === "attention" || c === "unknown");
             }).length
         },
         {
@@ -6754,7 +7166,7 @@ function updateTopIssues(rows) {
             icon: "⬇️",
             title: "Below OS UBR target",
             subtitle: "Device build is below configured UBR threshold",
-            count: rows.filter(function(d) { return String(d.OSUBRStatus || "").toLowerCase() === "below target"; }).length
+            count: rows.filter(function(d) { return isWindowsDevice(d) && String(d.OSUBRStatus || "").toLowerCase() === "below target"; }).length
         }
     ];
 
@@ -6775,20 +7187,22 @@ function updateTopIssues(rows) {
 
 function updateQuickLook(rows) {
     const total = rows.length;
+    const windowsRows = rows.filter(function(d) { return isWindowsDevice(d); });
+    const windowsTotal = windowsRows.length;
 
     const criticalRisk = rows.filter(function(d) { return String(d.RiskCategory || "").toLowerCase() === "critical"; }).length;
     const highRisk = rows.filter(function(d) { return String(d.RiskCategory || "").toLowerCase() === "high"; }).length;
     const staleDevices = rows.filter(function(d) { return ["stale30", "stale60", "stale90", "never"].includes(String(d.CheckInHealthCategory || "")); }).length;
     const lowStorage = rows.filter(function(d) { return ["critical", "low"].includes(String(d.StorageStatusCategory || "")); }).length;
-    const rebootPending = rows.filter(function(d) { return String(d.RebootPending || "").toLowerCase() === "yes"; }).length;
-    const firmwareInventory = rows.filter(function(d) { return String(d.FirmwareVersion || "").trim() !== ""; }).length;
-    const lenovoSBReady = rows.filter(function(d) { return String(d.LenovoSB2023Category || "").toLowerCase() === "ready"; }).length;
-    const lenovoSBUpdate = rows.filter(function(d) { return String(d.LenovoSB2023Category || "").toLowerCase() === "update"; }).length;
-    const dellSBReady = rows.filter(function(d) { return String(d.DellSB2023Category || "").toLowerCase() === "ready"; }).length;
-    const dellSBUpdate = rows.filter(function(d) { return String(d.DellSB2023Category || "").toLowerCase() === "update"; }).length;
-    const hpSBReady = rows.filter(function(d) { return String(d.HPSB2023Category || "").toLowerCase() === "ready"; }).length;
-    const hpSBUpdate = rows.filter(function(d) { return String(d.HPSB2023Category || "").toLowerCase() === "update"; }).length;
-    const autopilotEnrolled = rows.filter(function(d) { return String(d.AutopilotEnrolled || "").toLowerCase() === "yes"; }).length;
+    const rebootPending = windowsRows.filter(function(d) { return String(d.RebootPending || "").toLowerCase() === "yes"; }).length;
+    const firmwareInventory = windowsRows.filter(function(d) { return String(d.FirmwareVersion || "").trim() !== ""; }).length;
+    const lenovoSBReady = windowsRows.filter(function(d) { return String(d.LenovoSB2023Category || "").toLowerCase() === "ready"; }).length;
+    const lenovoSBUpdate = windowsRows.filter(function(d) { return String(d.LenovoSB2023Category || "").toLowerCase() === "update"; }).length;
+    const dellSBReady = windowsRows.filter(function(d) { return String(d.DellSB2023Category || "").toLowerCase() === "ready"; }).length;
+    const dellSBUpdate = windowsRows.filter(function(d) { return String(d.DellSB2023Category || "").toLowerCase() === "update"; }).length;
+    const hpSBReady = windowsRows.filter(function(d) { return String(d.HPSB2023Category || "").toLowerCase() === "ready"; }).length;
+    const hpSBUpdate = windowsRows.filter(function(d) { return String(d.HPSB2023Category || "").toLowerCase() === "update"; }).length;
+    const autopilotEnrolled = windowsRows.filter(function(d) { return String(d.AutopilotEnrolled || "").toLowerCase() === "yes"; }).length;
 
     const vipDevices = rows.filter(function(d) { return String(d.DevicePriority || "").toLowerCase() === "vip"; }).length;
     const compliant = rows.filter(function(d) { return String(d.ComplianceState || "").toLowerCase() === "compliant"; }).length;
@@ -6800,17 +7214,18 @@ function updateQuickLook(rows) {
     const noPrimaryUser = rows.filter(function(d) { return String(d.PrimaryUserAccountStatus || "").toLowerCase() === "no primary user"; }).length;
     const primaryUnknown = total - primaryEnabled - primaryDisabled - noPrimaryUser;
 
-    const secureBootEnabled = rows.filter(function(d) { return String(d.SecureBootStatus || "").toLowerCase() === "enabled"; }).length;
-    const defenderDeployed = rows.filter(function(d) { return String(d.DefenderStatusCategory || "").toLowerCase() === "deployed"; }).length;
-    const bitLockerProtected = rows.filter(function(d) { return String(d.BitLockerStatusCategory || "").toLowerCase() === "encryptedprotected"; }).length;
-    const bitLockerIntuneFallback = rows.filter(function(d) { return String(d.BitLockerStatusCategory || "").toLowerCase() === "intuneencrypted"; }).length;
+    const secureBootEnabled = windowsRows.filter(function(d) { return String(d.SecureBootStatus || "").toLowerCase() === "enabled"; }).length;
+    const lenovoSBPasswordRequired = windowsRows.filter(function(d) { return String(d.LenovoSecureBootRemediationCategory || "") === "passwordRequired"; }).length;
+    const defenderDeployed = windowsRows.filter(function(d) { return String(d.DefenderStatusCategory || "").toLowerCase() === "deployed"; }).length;
+    const bitLockerProtected = windowsRows.filter(function(d) { return String(d.BitLockerStatusCategory || "").toLowerCase() === "encryptedprotected"; }).length;
+    const bitLockerIntuneFallback = windowsRows.filter(function(d) { return String(d.BitLockerStatusCategory || "").toLowerCase() === "intuneencrypted"; }).length;
 
-    const build26100 = rows.filter(function(d) { return Number(d.OSBuild) === 26100; }).length;
-    const build26200 = rows.filter(function(d) { return Number(d.OSBuild) === 26200; }).length;
-    const older = rows.filter(function(d) { return Number(d.OSBuild) && Number(d.OSBuild) < 26100; }).length;
-    const newer = rows.filter(function(d) { return Number(d.OSBuild) && Number(d.OSBuild) > 26200; }).length;
-    const osUnknown = total - build26100 - build26200 - older - newer;
-    const belowTarget = rows.filter(function(d) { return String(d.OSUBRStatus || "").toLowerCase() === "below target"; }).length;
+    const build26100 = windowsRows.filter(function(d) { return Number(d.OSBuild) === 26100; }).length;
+    const build26200 = windowsRows.filter(function(d) { return Number(d.OSBuild) === 26200; }).length;
+    const older = windowsRows.filter(function(d) { return Number(d.OSBuild) && Number(d.OSBuild) < 26100; }).length;
+    const newer = windowsRows.filter(function(d) { return Number(d.OSBuild) && Number(d.OSBuild) > 26200; }).length;
+    const osUnknown = windowsTotal - build26100 - build26200 - older - newer;
+    const belowTarget = windowsRows.filter(function(d) { return String(d.OSUBRStatus || "").toLowerCase() === "below target"; }).length;
 
     setText("cardTotalDevices", total);
     setText("cardTotalNote", "Showing " + total + " of " + totalDeviceCount + " devices");
@@ -6839,6 +7254,8 @@ function updateQuickLook(rows) {
     setText("cardPrimaryDisabledNote", pct(primaryDisabled, total) + "% of filtered devices");
     setText("cardSecureBootEnabled", secureBootEnabled);
     setText("cardSecureBootEnabledNote", pct(secureBootEnabled, total) + "% of filtered devices");
+    setText("cardLenovoSBPasswordRequired", lenovoSBPasswordRequired);
+    setText("cardLenovoSBPasswordRequiredNote", pct(lenovoSBPasswordRequired, total) + "% of filtered devices");
     setText("cardDefenderDeployed", defenderDeployed);
     setText("cardDefenderDeployedNote", pct(defenderDeployed, total) + "% of filtered devices");
     setText("cardBitLockerProtected", bitLockerProtected);
@@ -6870,19 +7287,19 @@ function updateQuickLook(rows) {
         { color: "var(--gray)", degrees: deg(primaryUnknown, total) }
     ]);
 
-    setText("legend26100", build26100 + " / " + pct(build26100, total) + "%");
-    setText("legend26200", build26200 + " / " + pct(build26200, total) + "%");
-    setText("legendOlder", older + " / " + pct(older, total) + "%");
-    setText("legendNewer", newer + " / " + pct(newer, total) + "%");
-    setText("legendOSUnknown", osUnknown + " / " + pct(osUnknown, total) + "%");
-    setText("pieOSCenter", pct(build26200, total) + "%");
+    setText("legend26100", build26100 + " / " + pct(build26100, windowsTotal) + "%");
+    setText("legend26200", build26200 + " / " + pct(build26200, windowsTotal) + "%");
+    setText("legendOlder", older + " / " + pct(older, windowsTotal) + "%");
+    setText("legendNewer", newer + " / " + pct(newer, windowsTotal) + "%");
+    setText("legendOSUnknown", osUnknown + " / " + pct(osUnknown, windowsTotal) + "%");
+    setText("pieOSCenter", pct(build26200, windowsTotal) + "%");
 
     setPie("pieOS", [
-        { color: "var(--blue)", degrees: deg(build26100, total) },
-        { color: "var(--purple)", degrees: deg(build26200, total) },
-        { color: "var(--orange)", degrees: deg(older, total) },
-        { color: "var(--cyan)", degrees: deg(newer, total) },
-        { color: "var(--gray)", degrees: deg(osUnknown, total) }
+        { color: "var(--blue)", degrees: deg(build26100, windowsTotal) },
+        { color: "var(--purple)", degrees: deg(build26200, windowsTotal) },
+        { color: "var(--orange)", degrees: deg(older, windowsTotal) },
+        { color: "var(--cyan)", degrees: deg(newer, windowsTotal) },
+        { color: "var(--gray)", degrees: deg(osUnknown, windowsTotal) }
     ]);
 }
 
@@ -7022,6 +7439,11 @@ function openDeviceDrawer(deviceId) {
         ]),
         drawerSection("🛡️ Security", [
             ["Secure Boot", d.SecureBootStatus],
+            ["Lenovo SB remediation", d.LenovoSecureBootRemediationStatus],
+            ["Lenovo SB remediation state", d.LenovoSecureBootRemediationState],
+            ["Lenovo SB remediation last run", d.LenovoSecureBootRemediationLastRun],
+            ["Lenovo SB remediation error", d.LenovoSecureBootRemediationErrorSummary],
+            ["Lenovo SB remediation detail", d.LenovoSecureBootRemediationErrorDetail],
             ["Reboot pending", d.RebootPending],
             ["CBS reboot pending", d.CBSRebootPending],
             ["Windows Update reboot required", d.WindowsUpdateRebootRequired],
@@ -7080,6 +7502,8 @@ function renderTable(rows) {
             "<td>" + pill(d.PrimaryUserAccountStatus, "primaryuser") + "</td>" +
             "<td>" + escapeHtml(d.EmailAddress) + "</td>" +
             "<td>" + pill(d.SecureBootStatus || "Unknown", "secureboot") + "</td>" +
+            "<td>" + pill(d.LenovoSecureBootRemediationStatus || "No remediation result", "lenovosbremediation") + "</td>" +
+            "<td>" + escapeHtml(d.LenovoSecureBootRemediationErrorSummary || "") + "</td>" +
             "<td>" + pill(d.RebootPending || "Unknown", "reboot") + "</td>" +
             "<td>" + pill(d.DefenderStatus || "Unknown", "defender") + "</td>" +
             "<td>" + pill(d.DefenderRealTimeProtection || "Unknown", "defender") + "</td>" +
